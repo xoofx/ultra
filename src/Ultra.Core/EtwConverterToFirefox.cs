@@ -214,15 +214,16 @@ public class EtwConverterToFirefox : IDisposable
             options.LogProgress?.Invoke($"Loading Modules for process {process.Name}");
 
             var allModules = process.LoadedModules.ToList();
-            foreach (var module in allModules)
+            for (var i = 0; i < allModules.Count; i++)
             {
+                var module = allModules[i];
                 if (_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
                 {
                     continue; // Skip in case
                 }
-                
-                options.LogStepProgress?.Invoke($"Loading Symbols for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
-                
+
+                options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
+
                 var lib = new FirefoxProfiler.Lib
                 {
                     Name = module.Name,
