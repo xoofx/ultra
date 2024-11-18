@@ -55,12 +55,12 @@ While hovering the mouse over a function, you can see the time spent in the func
 
 Here is an example of a function in the `JIT` category:
 
-![Category JIT)](profile_category_jit.png)
+![Category JIT)](profile_category_JIT.png)
 
 
 Here is an example of a function in the `GC` category:
 
-![Category GC](profile_category_gc.png)
+![Category GC](profile_category_GC.png)
 
 ### Memory Track
 
