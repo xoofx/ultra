@@ -216,8 +216,13 @@ public class EtwConverterToFirefox : IDisposable
             var allModules = process.LoadedModules.ToList();
             foreach (var module in allModules)
             {
+                if (_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
+                {
+                    continue; // Skip in case
+                }
+                
                 options.LogStepProgress?.Invoke($"Loading Symbols for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
-
+                
                 var lib = new FirefoxProfiler.Lib
                 {
                     Name = module.Name,
@@ -360,7 +365,7 @@ public class EtwConverterToFirefox : IDisposable
                                     MethodILSize = methodJittingStarted.MethodILSize
                                 };
 
-                                jitCompilePendingMethodId.Add(methodJittingStarted.MethodID, (jitCompile, evt.TimeStampRelativeMSec));
+                                jitCompilePendingMethodId[methodJittingStarted.MethodID] = (jitCompile, evt.TimeStampRelativeMSec);
                             }
                             else if (evt is MethodLoadUnloadTraceDataBase methodLoadUnloadVerbose)
                             {
