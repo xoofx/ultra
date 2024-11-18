@@ -68,26 +68,26 @@ internal class Program
                                 
                                 options.LogStepProgress = (text) =>
                                 {
-                                    if (verbose && previousText != text)
+                                    if (verbose && previousText is not null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{previousText} [green]\u2713[/]");
+                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                         previousText = text;
                                     }
 
-                                    statusCtx.Status($"{text}");
+                                    statusCtx.Status(Markup.Escape(text));
                                 };
                                 options.LogProgress = (text) =>
                                 {
                                     if (verbose && previousText != null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{previousText} [green]\u2713[/]");
+                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                     }
 
-                                    statusCtx.Status(text);
+                                    statusCtx.Status(Markup.Escape(text));
                                     previousText = text;
                                 };
-                                options.WaitingFileToComplete = (file) => { statusCtx.Status($"Waiting for {file} to complete"); };
-                                options.WaitingFileToCompleteTimeOut = (file) => { statusCtx.Status($"Timeout waiting for {file} to complete"); };
+                                options.WaitingFileToComplete = (file) => { statusCtx.Status($"Waiting for {Markup.Escape(file)} to complete"); };
+                                options.WaitingFileToCompleteTimeOut = (file) => { statusCtx.Status($"Timeout waiting for {Markup.Escape(file)} to complete"); };
 
                                 // Add the pid passed as options
                                 options.ProcessIds.AddRange(pidList);
@@ -175,23 +175,23 @@ internal class Program
 
                                 options.LogStepProgress = (text) =>
                                 {
-                                    if (verbose && previousText != text)
+                                    if (verbose && previousText is not null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{previousText} [green]\u2713[/]");
+                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                         previousText = text;
                                     }
 
-                                    statusCtx.Status($"{text}");
+                                    statusCtx.Status(Markup.Escape(text));
                                 };
 
                                 options.LogProgress = (text) =>
                                 {
                                     if (verbose && previousText != null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{previousText} [green]\u2713[/]");
+                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                     }
 
-                                    statusCtx.Status(text);
+                                    statusCtx.Status(Markup.Escape(text));
                                     previousText = text;
                                 };
 
