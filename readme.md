@@ -4,8 +4,6 @@
 
 Ultra is a an advanced profiler for .NET Applications available on Windows.
 
-![Ultra Video](./img/ultra.webm)
-
 ## ✨ Features
 
 - ETW based **sampling profiler** - up to 8190 samples/second
