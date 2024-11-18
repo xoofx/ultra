@@ -1,4 +1,4 @@
-# Ultra [![ci](https://github.com/xoofx/Ultra/actions/workflows/ci.yml/badge.svg)](https://github.com/xoofx/Ultra/actions/workflows/ci.yml) [![NuGet](https://img.shields.io/nuget/v/Ultra.svg)](https://www.nuget.org/packages/Ultra/)
+# Ultra [![ci](https://github.com/xoofx/ultra/actions/workflows/ci.yml/badge.svg)](https://github.com/xoofx/ultra/actions/workflows/ci.yml) [![NuGet](https://img.shields.io/nuget/v/Ultra.svg)](https://www.nuget.org/packages/Ultra/)
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/xoofx/ultra/main/img/ultra.png">
 
