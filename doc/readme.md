@@ -16,6 +16,15 @@ $ ultra.exe profile -- my_command.exe arg0 arg1 arg2...
 
 This will create a `ultra_my_command_..._.json.gz` trace file in the current directory.
 
+When attaching an existing process, you can pass directly a PID to ultra.exe:
+
+```console
+$ ultra.exe profile 12594 # PID of the process to profile
+```
+
+> ⚠️ You will need to press only once `CTRL+C` to stop the profiling - or if the application is closed.
+
+
 ## Ultra Profiler UI
 
 In order to visualize a trace produced by `ultra.exe` you need to go to https://profiler.firefox.com/ and open the generated `json.gz` trace file.

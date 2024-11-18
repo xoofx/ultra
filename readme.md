@@ -56,6 +56,7 @@ Profiling a running application just requires the PID of the process to profile:
 
 ```console
 $ ultra.exe profile 15243 # PID of the process to profile
+# Wait for a bit and press only one CTRL+C to stop the profiling
 ```
 
 ## 📖 User Guide
