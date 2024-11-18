@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Ultra": {
+      "commandName": "Project",
+      "commandLineArgs": "convert --pid 472972 .\\ultra_Ultra.Example_2024-11-18_12_04_12.etl",
+      "workingDirectory": "C:\\code\\Captures"
+    }
+  }
+}

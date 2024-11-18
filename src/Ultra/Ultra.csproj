@@ -14,11 +14,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Description>This is a default project description</Description>
+    <Description>Ultra is a an advanced profiler for .NET Applications available on Windows.</Description>
     <Copyright>Alexandre Mutel</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Authors>Alexandre Mutel</Authors>
-    <PackageTags>tag1;tag2;tag3</PackageTags>
+    <PackageTags>profiler;etw</PackageTags>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
     <PackageIcon>ultra.png</PackageIcon>
     <PackageProjectUrl>https://github.com/xoofx/ultra</PackageProjectUrl>

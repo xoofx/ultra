@@ -10,8 +10,11 @@ using static Ultra.Core.FirefoxProfiler;
 
 namespace Ultra.Tests;
 
+/// <summary>
+/// No real tests here yet, just to check the serialization of Firefox profiler format
+/// </summary>
 [TestClass]
-public class Class1Test
+public class FirefoxProfilerTests
 {
     [TestMethod]
     public void TestMarker()

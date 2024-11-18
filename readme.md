@@ -9,6 +9,10 @@ Ultra is a an advanced profiler for .NET Applications available on Windows.
 - ETW based **sampling profiler** - up to 8190 samples/second
 - UI based on https://profiler.firefox.com/
   - Traces shareable online: Check this example: ✨ https://share.firefox.dev/3Cya7YW ✨
+  - **Timeline** visualization
+  - **Flamegraph / Stack Chart** visualization
+  - **Call Tree** visualization
+  - **Marker Chart** and **Marker Table** visualization  
 - Precise **kernel**, **native** and **managed** **function call stacks**
 - Categorization of functions: 
   - `.NET`, `.NET JIT`, `.NET GC`, `.NET CLR`, `Native`, `Kernel`
@@ -34,10 +38,24 @@ You need to have installed a [.NET 8.0+ SDK](https://dotnet.microsoft.com/en-us/
 $ dotnet tool install -g Ultra # The command ultra.exe will be available from your PATH
 ```
 
-Open a **terminal in administrative rights**, to profile the executable `my_commands.exe`:
+> ____
+> 🚨 The profiler **requires to run from an elevated prompt with administrative rights** 🚨 
+>
+> _This is required to allow to collect full stack traces, including kernel and native functions._
+> ____
+
+Example: open a **terminal with administrative rights**, to profile an executable called `my_commands.exe`:
 
 ```console
 $ ultra.exe profile -- my_command.exe arg0 arg1 arg2...
+```
+
+> ⚠️ Notice the `--` separator to separate the arguments to `ultra.exe` from the arguments to the profiled application.
+
+Profiling a running application just requires the PID of the process to profile:
+
+```console
+$ ultra.exe profile 15243 # PID of the process to profile
 ```
 
 ## 📖 User Guide
