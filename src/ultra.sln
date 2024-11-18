@@ -1,0 +1,51 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.32014.148
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Ultra", "Ultra\Ultra.csproj", "{FC67D552-9C9A-4CA2-8065-3D5C67116939}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Ultra.Tests", "Ultra.Tests\Ultra.Tests.csproj", "{5AC3B614-66DB-4092-BEBC-D5415A7D0361}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{BBC4B16D-083F-47E6-BFAE-9064E600F230}"
+	ProjectSection(SolutionItems) = preProject
+		..\.editorconfig = ..\.editorconfig
+		..\.gitattributes = ..\.gitattributes
+		..\.gitignore = ..\.gitignore
+		..\.github\workflows\ci.yml = ..\.github\workflows\ci.yml
+		Directory.Build.props = Directory.Build.props
+		Directory.Packages.props = Directory.Packages.props
+		dotnet-releaser.toml = dotnet-releaser.toml
+		global.json = global.json
+		..\license.txt = ..\license.txt
+		..\readme.md = ..\readme.md
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ultra.Core", "Ultra.Core\Ultra.Core.csproj", "{CF642542-CAD0-47E3-A76A-218EEB92661D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FC67D552-9C9A-4CA2-8065-3D5C67116939}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC67D552-9C9A-4CA2-8065-3D5C67116939}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC67D552-9C9A-4CA2-8065-3D5C67116939}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC67D552-9C9A-4CA2-8065-3D5C67116939}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5AC3B614-66DB-4092-BEBC-D5415A7D0361}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5AC3B614-66DB-4092-BEBC-D5415A7D0361}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5AC3B614-66DB-4092-BEBC-D5415A7D0361}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5AC3B614-66DB-4092-BEBC-D5415A7D0361}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CF642542-CAD0-47E3-A76A-218EEB92661D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CF642542-CAD0-47E3-A76A-218EEB92661D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CF642542-CAD0-47E3-A76A-218EEB92661D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CF642542-CAD0-47E3-A76A-218EEB92661D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {95E8F3B3-49E8-400E-97A1-38D8B946DFCA}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="ByteSize" Version="2.1.2" />
+    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.17" />
+    <PackageVersion Include="MinVer" Version="5.0.0" />
+    <PackageVersion Include="MSTest" Version="3.5.0" />
+    <PackageVersion Include="Spectre.Console" Version="0.49.1" />
+    <PackageVersion Include="XenoAtom.CommandLine" Version="1.0.1" />
+  </ItemGroup>
+</Project>

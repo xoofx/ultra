@@ -1,0 +1,11 @@
+# configuration file for dotnet-releaser
+# Disable default packs - It will only publish NuGet and the Changelog
+profile = "custom"
+[msbuild]
+project = "ultra.sln"
+[github]
+user = "xoofx"
+repo = "ultra"
+#[[pack]]
+#rid = ["win-x64", "win-arm64"]
+#kinds = ["zip"]
