@@ -29,6 +29,14 @@ public class GCEvent : FirefoxProfiler.MarkerPayload
         writer.WriteNumber("count", Count);
         writer.WriteNumber("depth", Depth);
         writer.WriteString("gcType", GCType);
+
+
+        // This is a dummy field to make it compatible with firefox-profiler - ugly hack, but there is no way to use our own marker styles, so we are reusing GCMajor here.
+        // But we need to workaround the following code that expect some fields to be present:
+        // https://github.com/xoofx/firefox-profiler/blob/56ac64c17b79b964c1263e8022dd2db3399f230f/src/components/tooltip/GCMarker.js#L218-L224
+        writer.WriteStartObject("timings");  
+        writer.WriteString("status", string.Empty);
+        writer.WriteEndObject();
     }
 
     public static FirefoxProfiler.MarkerSchema Schema()
@@ -68,7 +76,7 @@ public class GCEvent : FirefoxProfiler.MarkerPayload
                     Format = FirefoxProfiler.MarkerFormatType.String,
                     Key = "gcType",
                     Label = "GC Type",
-                },
+                }
             },
         };
 }

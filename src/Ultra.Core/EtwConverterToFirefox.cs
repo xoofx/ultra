@@ -260,8 +260,6 @@ public class EtwConverterToFirefox : IDisposable
 
             Dictionary<long, (JitCompileEvent, double)> jitCompilePendingMethodId = new();
 
-            double maxCpuTime = 0;
-            int threadIndexWithMaxCpuTime = -1;
 
             List<(double, GCHeapStatsEvent)> gcHeapStatsEvents = new();
 
@@ -272,6 +270,9 @@ public class EtwConverterToFirefox : IDisposable
             Stack<(double, GCSuspendExecutionEngineEvent)> gcSuspendEEEvents = new();
             Stack<double> gcRestartEEEvents = new();
             Stack<(double, GCEvent)> gcStartStopEvents = new();
+
+            double maxCpuTime = threads.Count > 0 ? threads[0].CPUMSec : 0;
+            int threadIndexWithMaxCpuTime = threads.Count > 0 ? profileThreadIndex : -1;
 
             // Add threads
             foreach (var thread in threads)
@@ -451,7 +452,7 @@ public class EtwConverterToFirefox : IDisposable
 
                                     gcStartStopEvents.Push((evt.TimeStampRelativeMSec, gcEvent));
                                 }
-                                else if (evt is GCEndTraceData gcEnd)
+                                else if (evt is GCEndTraceData gcEnd && gcStartStopEvents.Count > 0)
                                 {
                                     var (gcEventStartTime, gcEvent) = gcStartStopEvents.Pop();
 
@@ -568,7 +569,7 @@ public class EtwConverterToFirefox : IDisposable
                 var gcHeapStatsCounter = new FirefoxProfiler.Counter()
                 {
                     Name = "GCHeapStats",
-                    Category = "Memory",
+                    Category = "Memory", // Category must be Memory otherwise it won't be displayed
                     Description = "GC Heap Stats",
                     Color = FirefoxProfiler.ProfileColor.Orange, // Doesn't look like it is used
                     Pid = $"{process.ProcessID}",
@@ -594,9 +595,15 @@ public class EtwConverterToFirefox : IDisposable
                 }
             }
 
-            if (profile.Threads.Count > 0)
+            if (threads.Count > 0)
             {
-                profile.Meta.InitialSelectedThreads.Add(threadIndexWithMaxCpuTime >= 0 ? threadIndexWithMaxCpuTime : 0);
+                // Always make at least the first thread visible (that is taking most of the CPU time)
+                if (!profile.Meta.InitialVisibleThreads.Contains(threadIndexWithMaxCpuTime))
+                {
+                    profile.Meta.InitialVisibleThreads.Add(threadIndexWithMaxCpuTime);
+                }
+
+                profile.Meta.InitialSelectedThreads.Add(threadIndexWithMaxCpuTime);
             }
         }
 

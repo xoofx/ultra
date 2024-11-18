@@ -29,6 +29,9 @@ public class GCAllocationTickEvent : FirefoxProfiler.MarkerPayload
         writer.WriteString("allocationKind", AllocationKind);
         writer.WriteString("typeName", TypeName);
         writer.WriteNumber("heapIndex", HeapIndex);
+
+        // Firefox Profiler expects nursery field, but it's ok as we don't have it
+        // https://github.com/xoofx/firefox-profiler/blob/56ac64c17b79b964c1263e8022dd2db3399f230f/src/components/tooltip/GCMarker.js#L28-L32
     }
 
     public static FirefoxProfiler.MarkerSchema Schema()
@@ -76,7 +79,7 @@ public class GCAllocationTickEvent : FirefoxProfiler.MarkerPayload
                     Format = FirefoxProfiler.MarkerFormatType.Integer,
                     Key = "heapIndex",
                     Label = "Heap Index",
-                },
+                }
             }
         };
 }

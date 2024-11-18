@@ -4,6 +4,8 @@
 
 This is a default project description.
 
+Example of a captured profile: https://share.firefox.dev/3Cya7YW 🚀
+
 ## ✨ Features
 
 - TODO
