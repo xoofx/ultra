@@ -4,6 +4,8 @@
 
 Ultra is a an advanced profiler for .NET Applications available on Windows.
 
+> 📽️ Check this [video](https://vimeo.com/1030852299) for a quick tour of ultra! 📽️
+
 ## ✨ Features
 
 - ETW based **sampling profiler** - up to 8190 samples/second
