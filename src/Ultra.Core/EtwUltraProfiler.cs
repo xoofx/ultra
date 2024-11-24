@@ -104,7 +104,7 @@ public class EtwUltraProfiler : IDisposable
         // Append the pid for a single process that we are attaching to
         if (singleProcess is not null)
         {
-            baseName = $"{baseName}_{singleProcess.Id}";
+            baseName = $"{baseName}_pid_{singleProcess.Id}";
         }
         
         var options = new TraceEventProviderOptions()
@@ -181,23 +181,14 @@ public class EtwUltraProfiler : IDisposable
                 // Start a command line process if needed
                 if (ultraProfilerOptions.ProgramPath is not null)
                 {
-                    var startInfo = new ProcessStartInfo
+                    var processState = StartProcess(ultraProfilerOptions);
+                    processList.Add(processState.Process);
+                    // Append the pid for a single process that we are attaching to
+                    if (singleProcess is null)
                     {
-                        FileName = ultraProfilerOptions.ProgramPath,
-                        UseShellExecute = true,
-                        CreateNoWindow = true,
-                        WindowStyle = ProcessWindowStyle.Hidden
-                    };
-
-                    foreach (var arg in ultraProfilerOptions.Arguments)
-                    {
-                        startInfo.ArgumentList.Add(arg);
+                        baseName = $"{baseName}_pid_{processState.Process.Id}";
                     }
-
-                    ultraProfilerOptions.LogProgress?.Invoke($"Starting Process {startInfo.FileName} {string.Join(" ", startInfo.ArgumentList)}");
-                    var process = System.Diagnostics.Process.Start(startInfo)!;
-                    processList.Add(process);
-                    singleProcess ??= process;
+                    singleProcess ??= processState.Process;
                 }
 
                 foreach (var process in processList)
@@ -391,6 +382,97 @@ public class EtwUltraProfiler : IDisposable
         }
     }
 
+
+    private static ProcessState StartProcess(EtwUltraProfilerOptions ultraProfilerOptions)
+    {
+        var mode = ultraProfilerOptions.ConsoleMode;
+
+        var process = new Process();
+
+        var startInfo = process.StartInfo;
+        startInfo.FileName = ultraProfilerOptions.ProgramPath;
+
+        foreach (var arg in ultraProfilerOptions.Arguments)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        ultraProfilerOptions.LogProgress?.Invoke($"Starting Process {startInfo.FileName} {string.Join(" ", startInfo.ArgumentList)}");
+        
+        if (mode == EtwUltraProfilerConsoleMode.Silent)
+        {
+            startInfo.UseShellExecute = true;
+            startInfo.CreateNoWindow = true;
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+
+            process.Start();
+        }
+        else
+        {
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+            startInfo.RedirectStandardInput = true;
+            
+            process.OutputDataReceived += (sender, args) =>
+            {
+                if (args.Data != null)
+                {
+                    ultraProfilerOptions.ProgramLogStdout?.Invoke(args.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (sender, args) =>
+            {
+                if (args.Data != null)
+                {
+                    ultraProfilerOptions.ProgramLogStderr?.Invoke(args.Data);
+                }
+            };
+
+            process.Start();
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
+
+        var state = new ProcessState(process);
+
+        // Make sure to call WaitForExit
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                process.WaitForExit();
+                state.HasExited = true;
+            }
+            catch
+            {
+                // ignore
+            }
+        })
+        {
+            Name = "Ultra-ProcessWaitForExit",
+            IsBackground = true
+        };
+        thread.Start();
+
+        return state;
+    }
+    
+    private class ProcessState
+    {
+        public ProcessState(Process process)
+        {
+            Process = process;
+        }
+
+        public readonly Process Process;
+
+        public bool HasExited;
+    }
+    
     public void Dispose()
     {
         _userSession?.Dispose();

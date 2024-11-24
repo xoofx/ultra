@@ -9,6 +9,10 @@ var benchMarkdig = () =>
     for (int i = 0; i < countBenchMarkdig; i++)
     {
         var html = Markdig.Markdown.ToHtml(md);
+        if (i % 100 == 0 && i > 0)
+        {
+            Console.WriteLine($"Markdig {i} conversions done");
+        }
     }
 };
 
@@ -24,6 +28,11 @@ var benchScriban = () =>
     for (int i = 0; i < countBenchScriban; i++)
     {
         var text = template.Render(new { values = values });
+
+        if (i % 1000 == 0 && i > 0)
+        {
+            Console.WriteLine($"Scriban {i} conversions done");
+        }
     }
 };
 

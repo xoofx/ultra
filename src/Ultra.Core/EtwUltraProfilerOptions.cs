@@ -30,6 +30,8 @@ public class EtwUltraProfilerOptions
     
     public int TimeOutAfterInMs { get; set; }
 
+    public EtwUltraProfilerConsoleMode ConsoleMode { get; set; }
+
     public Action<string>? LogProgress;
 
     public Action<string>? LogStepProgress;
@@ -37,6 +39,10 @@ public class EtwUltraProfilerOptions
     public Action<string>? WaitingFileToComplete;
 
     public Action<string>? WaitingFileToCompleteTimeOut;
+
+    public Action<string>? ProgramLogStdout;
+
+    public Action<string>? ProgramLogStderr;
 
     public bool KeepEtlIntermediateFiles { get; set; }
 

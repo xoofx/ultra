@@ -3,9 +3,11 @@ using System.Diagnostics.Tracing;
 using System.Text;
 using ByteSizeLib;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 using Spectre.Console;
 using Ultra.Core;
 using XenoAtom.CommandLine;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Ultra;
 
@@ -42,7 +44,23 @@ internal class Program
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "keep-merged-etl-file", "Keep the merged ETL file.", v => options.KeepMergedEtl = v is not null },
                 { "keep-intermediate-etl-files", "Keep the intermediate ETL files before merging.", v => options.KeepEtlIntermediateFiles = v is not null },
-                // Action for the commit commandd
+                { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
+                    {
+                        if ("raw".Equals(v, StringComparison.OrdinalIgnoreCase))
+                        {
+                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Raw;
+                        }
+                        else if ("live".Equals(v, StringComparison.OrdinalIgnoreCase))
+                        {
+                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Live;
+                        }
+                        else
+                        {
+                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Silent;
+                        }
+                    }
+                },
+                // Action for the commit command
                 async (ctx, arguments) =>
                 {
                     if (arguments.Length == 0 && pidList.Count == 0)
@@ -59,76 +77,176 @@ internal class Program
 
                     string? fileOutput = null;
 
-                    await AnsiConsole.Status()
-                        .Spinner(Spinner.Known.Default)
-                        .SpinnerStyle(Style.Parse("red"))
-                        .StartAsync("Profiling", async statusCtx =>
+                    
+                    // Add the pid passed as options
+                    options.ProcessIds.AddRange(pidList);
+
+                    if (arguments.Length == 1 && int.TryParse(arguments[0], out var pid))
+                    {
+                        options.ProcessIds.Add(pid);
+                    }
+                    else if (arguments.Length > 0)
+                    {
+                        options.ProgramPath = arguments[0];
+                        options.Arguments.AddRange(arguments.AsSpan().Slice(1));
+                    }
+
+                    var etwProfiler = new EtwUltraProfiler();
+                    Console.CancelKeyPress += (sender, eventArgs) =>
+                    {
+                        AnsiConsole.WriteLine();
+                        AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
+                        eventArgs.Cancel = true;
+                        // ReSharper disable once AccessToDisposedClosure
+                        if (etwProfiler.Cancel())
+                        {
+                            AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
+                        }
+                    };
+                    
+                    if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Silent)
+                    {
+                        await AnsiConsole.Status()
+                            .Spinner(Spinner.Known.Default)
+                            .SpinnerStyle(Style.Parse("red"))
+                            .StartAsync("Profiling", async statusCtx =>
+                                {
+                                    string? previousText = null;
+
+                                    options.LogStepProgress = (text) =>
+                                    {
+                                        if (verbose && previousText is not null && previousText != text)
+                                        {
+                                            AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
+                                            previousText = text;
+                                        }
+
+                                        statusCtx.Status(Markup.Escape(text));
+                                    };
+                                    options.LogProgress = (text) =>
+                                    {
+                                        if (verbose && previousText != null && previousText != text)
+                                        {
+                                            AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
+                                        }
+
+                                        statusCtx.Status(Markup.Escape(text));
+                                        previousText = text;
+                                    };
+                                    options.WaitingFileToComplete = (file) => { statusCtx.Status($"Waiting for {Markup.Escape(file)} to complete"); };
+                                    options.WaitingFileToCompleteTimeOut = (file) => { statusCtx.Status($"Timeout waiting for {Markup.Escape(file)} to complete"); };
+
+                                    try
+                                    {
+                                        fileOutput = await etwProfiler.Run(options);
+                                    }
+                                    finally
+                                    {
+                                        etwProfiler.Dispose();
+                                    }
+
+                                    if (verbose)
+                                    {
+                                        options.LogProgress.Invoke("Profiling Done");
+                                    }
+                                }
+                            );
+                    }
+                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Raw)
+                    {
+                        options.LogStepProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
+                        options.LogProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
+                        options.WaitingFileToComplete = (file) => { AnsiConsole.WriteLine($">>ultra::Waiting for {Markup.Escape(file)} to complete"); };
+                        options.WaitingFileToCompleteTimeOut = (file) => { AnsiConsole.WriteLine($">>ultra::Timeout waiting for {Markup.Escape(file)} to complete"); };
+                        options.ProgramLogStdout = AnsiConsole.WriteLine;
+                        options.ProgramLogStderr = AnsiConsole.WriteLine;
+                        
+                        try
+                        {
+                            fileOutput = await etwProfiler.Run(options);
+                        }
+                        finally
+                        {
+                            etwProfiler.Dispose();
+                        }
+                    }
+                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Live)
+                    {
+                        var statusTable = new StatusTable();
+
+                        await AnsiConsole.Live(statusTable.Table)
+                            // .AutoClear(true) // No auto clear to keep the output (e.g. in case the program shows errors in its stdout/stderr)
+                            .StartAsync(async liveCtx =>
                             {
                                 string? previousText = null;
-                                
+
                                 options.LogStepProgress = (text) =>
                                 {
                                     if (verbose && previousText is not null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
+                                        statusTable.LogText($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                         previousText = text;
                                     }
 
-                                    statusCtx.Status(Markup.Escape(text));
+                                    statusTable.Status(Markup.Escape(text));
+
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
                                 };
+
                                 options.LogProgress = (text) =>
                                 {
                                     if (verbose && previousText != null && previousText != text)
                                     {
-                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
+                                        statusTable.LogText($"{Markup.Escape(previousText)} [green]\u2713[/]");
                                     }
 
-                                    statusCtx.Status(Markup.Escape(text));
+                                    statusTable.Status(Markup.Escape(text));
                                     previousText = text;
-                                };
-                                options.WaitingFileToComplete = (file) => { statusCtx.Status($"Waiting for {Markup.Escape(file)} to complete"); };
-                                options.WaitingFileToCompleteTimeOut = (file) => { statusCtx.Status($"Timeout waiting for {Markup.Escape(file)} to complete"); };
 
-                                // Add the pid passed as options
-                                options.ProcessIds.AddRange(pidList);
-                                
-                                if (arguments.Length == 1 && int.TryParse(arguments[0], out var pid))
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
+                                };
+
+                                options.WaitingFileToComplete = (file) =>
                                 {
-                                    options.ProcessIds.Add(pid);
-                                }
-                                else if (arguments.Length > 0)
+                                    statusTable.Status($"Waiting for {Markup.Escape(file)} to complete");
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
+                                };
+
+                                options.WaitingFileToCompleteTimeOut = (file) =>
                                 {
-                                    options.ProgramPath = arguments[0];
-                                    options.Arguments.AddRange(arguments.AsSpan().Slice(1));
-                                }
+                                    statusTable.Status($"Timeout waiting for {Markup.Escape(file)} to complete");
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
+                                };
+
+                                options.ProgramLogStdout = (text) =>
+                                {
+                                    statusTable.LogText(text);
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
+                                };
+
+                                options.ProgramLogStderr = (text) =>
+                                {
+                                    statusTable.LogText(text);
+                                    statusTable.UpdateTable();
+                                    liveCtx.Refresh();
+                                };
                                 
-                                var etwProfiler = new EtwUltraProfiler();
                                 try
                                 {
-                                    Console.CancelKeyPress += (sender, eventArgs) =>
-                                    {
-                                        AnsiConsole.WriteLine();
-                                        AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
-                                        eventArgs.Cancel = true;
-                                        if (etwProfiler.Cancel())
-                                        {
-                                            AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
-                                        }
-                                    };
-
                                     fileOutput = await etwProfiler.Run(options);
                                 }
                                 finally
                                 {
                                     etwProfiler.Dispose();
                                 }
-
-                                if (verbose)
-                                {
-                                    options.LogProgress.Invoke("Profiling Done");
-                                }
                             }
                         );
+                    }
 
                     if (fileOutput != null)
                     {
@@ -253,6 +371,63 @@ internal class Program
                 AnsiConsole.WriteLine(ex.ToString());
             }
             return 1;
+        }
+    }
+    
+    private class StatusTable
+    {
+        private string? _statusText;
+        private readonly Queue<string> _logLines = new();
+        private const int MaxLogLines = 10;
+        private int _spinnerStep;
+        private readonly Style _spinnerStyle;
+
+        public StatusTable()
+        {
+            Table = new Table();
+            Table.AddColumn(new TableColumn("Status"));
+            _spinnerStyle = Style.Parse("red");
+        }
+
+        public Table Table { get; }
+        
+        public void LogText(string text)
+        {
+            if (_logLines.Count > MaxLogLines)
+            {
+                _logLines.Dequeue();
+            }
+
+            _logLines.Enqueue(text);
+        }
+        
+        public void Status(string text)
+        {
+            _statusText = text;
+        }
+
+        public void UpdateTable()
+        {
+            Table.Rows.Clear();
+
+            if (_logLines.Count > 0)
+            {
+                var rows = new Rows(_logLines.Select(x => new Markup(x)));
+                Table.AddRow(rows);
+            }
+
+            if (_statusText != null)
+            {
+                var tableColumn = Table.Columns[0];
+
+                var spinnerStep = _spinnerStep;
+                var spinnerText = Spinner.Known.Default.Frames[spinnerStep];
+                _spinnerStep = (_spinnerStep + 1) % Spinner.Known.Default.Frames.Count;
+
+                tableColumn.Header = new Markup($"[red]{spinnerText}[/] Status");
+                tableColumn.Footer = new Markup(_statusText);
+                Table.ShowFooters = true;
+            }
         }
     }
 }

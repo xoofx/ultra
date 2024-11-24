@@ -16,6 +16,22 @@ $ ultra.exe profile -- my_command.exe arg0 arg1 arg2...
 
 This will create a `ultra_my_command_..._.json.gz` trace file in the current directory.
 
+By default, ultra won't show the stdout/stderr of the program launched. You can change this behavior by specifying the `--mode` option:
+
+- `silent` (default): won't mix program's output
+- `raw`: will mix ultra and program output together in a raw output. Ultra output will be prefixed at the start of a line with `>>ultra::`
+- `live`: will mix ultra and program output within a live table
+
+For example, a profile with `live` mode:
+
+```console
+$ ultra.exe profile --mode live -- my_command.exe arg0 arg1 arg2...
+```
+
+will display the following live table when running your process:
+
+![Live ultra mode](profile_mode_live.png)
+
 When attaching an existing process, you can pass directly a PID to ultra.exe:
 
 ```console
@@ -116,11 +132,24 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
 
   -h, -?, --help                    Show this message and exit
       --pid=PID                     The PID of the process to attach the profiler to.
-      --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default is 8190Hz = 0.122ms.
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\xoofx\AppData\Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\xoofx\AppData\Local\Temp\SymbolCache*https://
-                                      symbols.nuget.org/download/symbols`.
+      --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default
+                                      is 8190Hz = 0.122ms.
+      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;
+                                      SRV*C:\Users\alexa\AppData\Local\Temp\
+                                      SymbolCache*https://msdl.microsoft.com/download/
+                                      symbols;SRV*C:\Users\alexa\AppData\Local\Temp\
+                                      SymbolCache*https://symbols.nuget.org/download/
+                                      symbols`.
       --keep-merged-etl-file        Keep the merged ETL file.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
+      --mode=VALUE                  Defines how the stdout/stderr of a program
+                                      explicitly started by ultra should be
+                                      integrated in its output. Default is `silent`
+                                      which will not mix program's output. The other
+                                      options are: `raw` is going to mix ultra and
+                                      program output together in a raw output. `live`
+                                      is going to mix ultra and program output within
+                                      a live table.
 ```
 
 ## Convert
@@ -134,6 +163,10 @@ Usage: ultra convert --pid xxx <etl_file_name.etl>
 
   -h, -?, --help                    Show this message and exit
       --pid=PID                     The PID of the process
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\xoofx\AppData\Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\xoofx\AppData\Local\Temp\SymbolCache*https://
-                                      symbols.nuget.org/download/symbols`.
+      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;
+                                      SRV*C:\Users\alexa\AppData\Local\Temp\
+                                      SymbolCache*https://msdl.microsoft.com/download/
+                                      symbols;SRV*C:\Users\alexa\AppData\Local\Temp\
+                                      SymbolCache*https://symbols.nuget.org/download/
+                                      symbols`.
 ```
