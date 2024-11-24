@@ -93,7 +93,7 @@ The memory track shows the managed memory usage of the process. You can see the 
 
 ![Profile Memory](profile_memory.png)
 
-## GC Allocation Track
+### GC Allocation Track
 
 The GC Allocation Track shows the allocation rate of the process. You can see the allocation rate over time.
 
@@ -123,7 +123,7 @@ Available commands:
   convert                           Convert an existing ETL file to a Firefox Profiler json file
 ```
 
-## Profile
+### Profile
 
 This is the main command to profile an application - Only working within an elevated prompt:
 
@@ -152,7 +152,7 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
                                       a live table.
 ```
 
-## Convert
+### Convert
 
 Convert an existing ETL file to a Firefox Profiler json file:
 
