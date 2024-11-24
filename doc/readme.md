@@ -45,6 +45,12 @@ $ ultra.exe profile 12594 # PID of the process to profile
 
 In order to visualize a trace produced by `ultra.exe` you need to go to https://profiler.firefox.com/ and open the generated `json.gz` trace file.
 
+> :notebook: **Note**
+> 
+> When loading a trace with the Firefox Profiler, the trace won't be uploaded to a server but only processed locally in your browser, so **the UI is completely offline**.
+> 
+> It is only if you want to share the trace with a link that it will upload it to a server. But you can also share the trace file directly.
+
 ### Timeline
 
 This screenshot shows a profile captured with ultra and is available online [here](https://share.firefox.dev/3Cya7YW)
