@@ -20,7 +20,7 @@ namespace Ultra.Core;
 public static partial class FirefoxProfiler
 {
     [JsonSourceGenerationOptions(
-        WriteIndented = true,
+        WriteIndented = false, // Set to true when debugging
         PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         //Converters = [
@@ -50,13 +50,13 @@ public static partial class FirefoxProfiler
             Prefix = new List<int?>();
         }
 
-        public List<int> Frame { get; }
+        public List<int> Frame { get; set; }
 
-        public List<int?> Category { get; }
+        public List<int?> Category { get; set; }
 
-        public List<int?> Subcategory { get; }
+        public List<int?> Subcategory { get; set; }
 
-        public List<int?> Prefix { get; }
+        public List<int?> Prefix { get; set; }
 
         public int Length { get; set; }
     }
@@ -68,7 +68,7 @@ public static partial class FirefoxProfiler
             Stack = new List<int?>();
         }
 
-        public List<int?> Stack { get; }
+        public List<int?> Stack { get; set; }
 
         public List<double>? Time { get; set; }
 
@@ -106,13 +106,13 @@ public static partial class FirefoxProfiler
             InNursery = new List<bool>();
         }
 
-        public List<string> ClassName { get; }
+        public List<string> ClassName { get; set; }
 
-        public List<string> TypeName { get; }
+        public List<string> TypeName { get; set; }
 
-        public List<string> CoarseType { get; }
+        public List<string> CoarseType { get; set; }
 
-        public List<bool> InNursery { get; }
+        public List<bool> InNursery { get; set; }
     }
 
     public class RawMarkerTable
@@ -128,19 +128,19 @@ public static partial class FirefoxProfiler
             ThreadId = new List<int>();
         }
 
-        public List<MarkerPayload?> Data { get; }
+        public List<MarkerPayload?> Data { get; set; }
 
-        public List<int> Name { get; }
+        public List<int> Name { get; set; }
 
-        public List<double?> StartTime { get; }
+        public List<double?> StartTime { get; set; }
 
-        public List<double?> EndTime { get; }
+        public List<double?> EndTime { get; set; }
 
-        public List<MarkerPhase> Phase { get; }
+        public List<MarkerPhase> Phase { get; set; }
 
-        public List<int> Category { get; }
+        public List<int> Category { get; set; }
 
-        public List<int> ThreadId { get; }
+        public List<int> ThreadId { get; set; }
 
         public int Length { get; set; }
     }
@@ -169,25 +169,25 @@ public static partial class FirefoxProfiler
             Column = new List<int?>();
         }
 
-        public List<int> Address { get; }
+        public List<int> Address { get; set; }
 
-        public List<int> InlineDepth { get; }
+        public List<int> InlineDepth { get; set; }
 
-        public List<int?> Category { get; }
+        public List<int?> Category { get; set; }
 
-        public List<int?> Subcategory { get; }
+        public List<int?> Subcategory { get; set; }
 
-        public List<int> Func { get; }
+        public List<int> Func { get; set; }
 
-        public List<int?> NativeSymbol { get; }
+        public List<int?> NativeSymbol { get; set; }
 
-        public List<int?> InnerWindowID { get; }
+        public List<int?> InnerWindowID { get; set; }
 
-        public List<int?> Implementation { get; }
+        public List<int?> Implementation { get; set; }
 
-        public List<int?> Line { get; }
+        public List<int?> Line { get; set; }
 
-        public List<int?> Column { get; }
+        public List<int?> Column { get; set; }
 
         public int Length { get; set; }
     }
@@ -205,19 +205,19 @@ public static partial class FirefoxProfiler
             ColumnNumber = new List<int?>();
         }
 
-        public List<int> Name { get; }
+        public List<int> Name { get; set; }
 
-        public List<bool> IsJS { get; }
+        public List<bool> IsJS { get; set; }
 
-        public List<bool> RelevantForJS { get; }
+        public List<bool> RelevantForJS { get; set; }
 
-        public List<int> Resource { get; }
+        public List<int> Resource { get; set; }
 
-        public List<int?> FileName { get; }
+        public List<int?> FileName { get; set; }
 
-        public List<int?> LineNumber { get; }
+        public List<int?> LineNumber { get; set; }
 
-        public List<int?> ColumnNumber { get; }
+        public List<int?> ColumnNumber { get; set; }
 
         public int Length { get; set; }
     }
@@ -232,13 +232,13 @@ public static partial class FirefoxProfiler
             FunctionSize = new List<int?>();
         }
 
-        public List<int> LibIndex { get; }
+        public List<int> LibIndex { get; set; }
 
-        public List<int> Address { get; }
+        public List<int> Address { get; set; }
 
-        public List<int> Name { get; }
+        public List<int> Name { get; set; }
 
-        public List<int?> FunctionSize { get; }
+        public List<int?> FunctionSize { get; set; }
 
         public int Length { get; set; }
     }
@@ -253,13 +253,13 @@ public static partial class FirefoxProfiler
             Type = new List<int>();
         }
 
-        public List<int?> Lib { get; }
+        public List<int?> Lib { get; set; }
 
-        public List<int> Name { get; }
+        public List<int> Name { get; set; }
 
-        public List<int?> Host { get; }
+        public List<int?> Host { get; set; }
 
-        public List<int> Type { get; }
+        public List<int> Type { get; set; }
 
         public int Length { get; set; }
     }
@@ -310,7 +310,7 @@ public static partial class FirefoxProfiler
 
         public ProfileColor Color { get; set; }
 
-        public List<string> Subcategories { get; }
+        public List<string> Subcategories { get; set; }
     }
 
     public class Page
@@ -350,9 +350,9 @@ public static partial class FirefoxProfiler
             Features = new List<string>();
         }
 
-        public List<string> Threads { get; }
+        public List<string> Threads { get; set; }
 
-        public List<string> Features { get; }
+        public List<string> Features { get; set; }
 
         public int Capacity { get; set; }
 
@@ -380,19 +380,19 @@ public static partial class FirefoxProfiler
         public int SpeedIndex { get; set; }
 
         [JsonPropertyName("VisualProgress")]
-        public List<ProgressGraphData> VisualProgress { get; }
+        public List<ProgressGraphData> VisualProgress { get; set; }
 
         [JsonPropertyName("ContentfulSpeedIndex")]
         public int? ContentfulSpeedIndex { get; set; }
 
         [JsonPropertyName("ContentfulSpeedIndexProgress")]
-        public List<ProgressGraphData> ContentfulSpeedIndexProgress { get; }
+        public List<ProgressGraphData> ContentfulSpeedIndexProgress { get; set; }
 
         [JsonPropertyName("PerceptualSpeedIndex")]
         public int? PerceptualSpeedIndex { get; set; }
 
         [JsonPropertyName("PerceptualSpeedIndexProgress")]
-        public List<ProgressGraphData> PerceptualSpeedIndexProgress { get; }
+        public List<ProgressGraphData> PerceptualSpeedIndexProgress { get; set; }
 
         [JsonPropertyName("VisualReadiness")]
         public int VisualReadiness { get; set; }
@@ -472,15 +472,15 @@ public static partial class FirefoxProfiler
             Time = new List<int>();
         }
 
-        public List<int> Counters { get; }
+        public List<int> Counters { get; set; }
 
-        public List<int> ExpiredMarkerCleaning { get; }
+        public List<int> ExpiredMarkerCleaning { get; set; }
 
-        public List<int> Locking { get; }
+        public List<int> Locking { get; set; }
 
-        public List<int> Threads { get; }
+        public List<int> Threads { get; set; }
 
-        public List<int> Time { get; }
+        public List<int> Time { get; set; }
 
         public int Length { get; set; }
     }
@@ -493,7 +493,7 @@ public static partial class FirefoxProfiler
             Pid = string.Empty;
         }
 
-        public ProfilerOverheadSamplesTable Samples { get; }
+        public ProfilerOverheadSamplesTable Samples { get; set; }
 
         public ProfilerOverheadStats? Statistics { get; set; }
 
@@ -530,7 +530,7 @@ public static partial class FirefoxProfiler
 
         public double? UnregisterTime { get; set; }
 
-        public List<PausedRange> PausedRanges { get; }
+        public List<PausedRange> PausedRanges { get; set; }
 
         public bool? ShowMarkersInTimeline { get; set; }
 
@@ -549,7 +549,7 @@ public static partial class FirefoxProfiler
 
         public string Tid { get; set; }
 
-        public SamplesTable Samples { get; }
+        public SamplesTable Samples { get; set; }
 
         //[JsonPropertyName("jsAllocations")]
         //public JsAllocationsTable? JsAllocations { get; set; }
@@ -557,19 +557,19 @@ public static partial class FirefoxProfiler
         //[JsonPropertyName("nativeAllocations")]
         //public NativeAllocationsTable? NativeAllocations { get; set; }
 
-        public RawMarkerTable Markers { get; }
+        public RawMarkerTable Markers { get; set; }
 
-        public StackTable StackTable { get; }
+        public StackTable StackTable { get; set; }
 
-        public FrameTable FrameTable { get; }
+        public FrameTable FrameTable { get; set; }
 
-        public List<string> StringArray { get; }
+        public List<string> StringArray { get; set; }
 
-        public FuncTable FuncTable { get; }
+        public FuncTable FuncTable { get; set; }
 
-        public ResourceTable ResourceTable { get; }
+        public ResourceTable ResourceTable { get; set; }
 
-        public NativeSymbolTable NativeSymbols { get; }
+        public NativeSymbolTable NativeSymbols { get; set; }
 
         public JsTracerTable? JsTracer { get; set; }
 
@@ -591,9 +591,9 @@ public static partial class FirefoxProfiler
             ThreadId = new();
         }
 
-        public List<int> MemoryAddress { get; }
+        public List<int> MemoryAddress { get; set; }
 
-        public List<int> ThreadId { get; }
+        public List<int> ThreadId { get; set; }
     }
 
     public class UnbalancedNativeAllocationsTable : NativeAllocationsTable
@@ -671,7 +671,7 @@ public static partial class FirefoxProfiler
 
         public ProfilerConfiguration? Configuration { get; set; }
 
-        public List<MarkerSchema> MarkerSchema { get; }
+        public List<MarkerSchema> MarkerSchema { get; set; }
 
         public SampleUnits? SampleUnits { get; set; }
 
@@ -705,9 +705,9 @@ public static partial class FirefoxProfiler
             Threads = new List<Thread>();
         }
 
-        public ProfileMeta Meta { get; }
+        public ProfileMeta Meta { get; set; }
 
-        public List<Lib> Libs { get; }
+        public List<Lib> Libs { get; set; }
 
         public List<Page>? Pages { get; set; }
 
@@ -715,7 +715,7 @@ public static partial class FirefoxProfiler
 
         public List<ProfilerOverhead>? ProfilerOverhead { get; set; }
 
-        public List<Thread> Threads { get; }
+        public List<Thread> Threads { get; set; }
     }
 
     public class ExtensionTable
@@ -727,11 +727,11 @@ public static partial class FirefoxProfiler
             Name = new List<string>();
         }
 
-        public List<string> BaseURL { get; }
+        public List<string> BaseURL { get; set; }
 
-        public List<string> Id { get; }
+        public List<string> Id { get; set; }
 
-        public List<string> Name { get; }
+        public List<string> Name { get; set; }
 
         public int Length { get; set; }
     }
@@ -749,7 +749,7 @@ public static partial class FirefoxProfiler
 
         public List<int>? Number { get; set; }
 
-        public List<long> Count { get; }
+        public List<long> Count { get; set; }
 
         public int Length { get; set; }
     }
@@ -777,7 +777,7 @@ public static partial class FirefoxProfiler
 
         public int MainThreadIndex { get; set; }
 
-        public CounterSamplesTable Samples { get; }
+        public CounterSamplesTable Samples { get; set; }
     }
 
     public class JsTracerTable
@@ -791,15 +791,15 @@ public static partial class FirefoxProfiler
             Column = new List<int?>();
         }
 
-        public List<int> Events { get; }
+        public List<int> Events { get; set; }
 
-        public List<int> Timestamps { get; }
+        public List<int> Timestamps { get; set; }
 
-        public List<int?> Durations { get; }
+        public List<int?> Durations { get; set; }
 
-        public List<int?> Line { get; }
+        public List<int?> Line { get; set; }
 
-        public List<int?> Column { get; }
+        public List<int?> Column { get; set; }
 
         public int Length { get; set; }
     }
@@ -830,7 +830,7 @@ public static partial class FirefoxProfiler
 
         public string Label { get; set; }
 
-        public List<ProfileInfoEntry> Entries { get; }
+        public List<ProfileInfoEntry> Entries { get; set; }
     }
 
     public class ProfileInfoEntry
@@ -1040,7 +1040,7 @@ public static partial class FirefoxProfiler
             Columns = new();
         }
 
-        public List<TableColumnFormat> Columns { get; }
+        public List<TableColumnFormat> Columns { get; set; }
     }
 
     public class TableColumnFormat
@@ -1128,9 +1128,9 @@ public static partial class FirefoxProfiler
 
         public string? ChartLabel { get; set; }
 
-        public List<MarkerDisplayLocation> Display { get; }
+        public List<MarkerDisplayLocation> Display { get; set; }
 
-        public List<MarkerDataItem> Data { get; }
+        public List<MarkerDataItem> Data { get; set; }
 
         public List<MarkerGraph>? Graphs { get; set; }
 
@@ -1218,8 +1218,8 @@ public static partial class FirefoxProfiler
                             payload.ExtensionData[propertyName] = null;
                             break;
                         default:
-                            throw new JsonException($"Unexpected token type {reader.TokenType} for MarkerPayload");
-
+                            payload.ExtensionData[propertyName] = JsonSerializer.Deserialize<object>(ref reader);
+                            break;
                     }
                 }
             }
@@ -1283,7 +1283,8 @@ public static partial class FirefoxProfiler
                             writer.WriteNullValue();
                             break;
                         default:
-                            throw new JsonException($"Unexpected value type {value.GetType()} for MarkerPayload");
+                            JsonSerializer.Serialize(writer, value);
+                            break;
                     }
                 }
             }
