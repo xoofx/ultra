@@ -10,7 +10,7 @@ public class EtwUltraProfilerOptions
 {
     public EtwUltraProfilerOptions()
     {
-        CheckDeltaTimeInMs = 100;
+        CheckDeltaTimeInMs = 500;
         UpdateLogAfterInMs = 1000;
         TimeOutAfterInMs = 30 * 1000; // 30s
         CpuSamplingIntervalInMs = 1000.0f / 8190.0f;

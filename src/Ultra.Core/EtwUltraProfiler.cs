@@ -279,8 +279,6 @@ public class EtwUltraProfiler : IDisposable
                 TraceEventLevel.Verbose,
                 (ulong)(ClrRundownTraceEventParser.Keywords.Default & ~ClrRundownTraceEventParser.Keywords.Loader), options);
             
-            await Task.Delay(500);
-
             await WaitForStaleFile(rundownSession, ultraProfilerOptions);
         }
 
@@ -351,7 +349,7 @@ public class EtwUltraProfiler : IDisposable
         var startTime = clock.ElapsedMilliseconds;
         var fileInfo = new FileInfo(file);
         if (!fileInfo.Exists) return;
-        var length = fileInfo.Length;
+        var length = 0L;
         long lastTimeLogInMs = -1;
         while (true)
         {
