@@ -28,13 +28,13 @@ public class EtwConverterToFirefox : IDisposable
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
 
-    private const int CategoryOther = 0;
-    private const int CategoryKernel = 1;
-    private const int CategoryNative = 2;
-    private const int CategoryManaged = 3;
-    private const int CategoryGC = 4;
-    private const int CategoryJit = 5;
-    private const int CategoryClr = 6;
+    public const int CategoryOther = 0;
+    public const int CategoryKernel = 1;
+    public const int CategoryNative = 2;
+    public const int CategoryManaged = 3;
+    public const int CategoryGC = 4;
+    public const int CategoryJit = 5;
+    public const int CategoryClr = 6;
 
     public EtwConverterToFirefox()
     {
