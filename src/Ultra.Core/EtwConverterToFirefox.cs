@@ -280,9 +280,18 @@ public class EtwConverterToFirefox : IDisposable
             double maxCpuTime = threads.Count > 0 ? threads[0].CPUMSec : 0;
             int threadIndexWithMaxCpuTime = threads.Count > 0 ? profileThreadIndex : -1;
 
+            var threadVisited = new HashSet<int>();
+
             // Add threads
             foreach (var thread in threads)
             {
+                // Skip threads that have already been visited
+                // TODO: for some reasons we have some threads that are duplicated?
+                if (!threadVisited.Add(thread.ThreadID))
+                {
+                    continue;
+                }
+
                 _mapCallStackIndexToFirefox.Clear();
                 _mapCodeAddressIndexToFirefox.Clear();
                 _mapMethodIndexToFirefox.Clear();
