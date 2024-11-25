@@ -282,9 +282,12 @@ public class EtwConverterToFirefox : IDisposable
 
             var threadVisited = new HashSet<int>();
 
+            var processName = $"{process.Name} ({process.ProcessID})";
+
             // Add threads
-            foreach (var thread in threads)
+            for (var threadIndex = 0; threadIndex < threads.Count; threadIndex++)
             {
+                var thread = threads[threadIndex];
                 // Skip threads that have already been visited
                 // TODO: for some reasons we have some threads that are duplicated?
                 if (!threadVisited.Add(thread.ThreadID))
@@ -301,9 +304,15 @@ public class EtwConverterToFirefox : IDisposable
                 gcSuspendEEEvents.Clear();
                 gcRestartEEEvents.Clear();
 
+                var threadBaseName = thread.ThreadInfo is not null
+                    ? $"{thread.ThreadInfo} ({thread.ThreadID})"
+                    : $"Thread ({thread.ThreadID})";
+                var threadName = $"{threadIndex} - {threadBaseName}";
+                
                 var profileThread = new FirefoxProfiler.Thread
                 {
-                    Name = thread.ThreadInfo is not null ? $"{thread.ThreadInfo} ({thread.ThreadID})" : $"Thread ({thread.ThreadID})",
+                    Name = threadName,
+                    ProcessName = processName,
                     ProcessStartupTime = thread.StartTimeRelativeMSec,
                     RegisterTime = thread.StartTimeRelativeMSec,
                     ProcessShutdownTime = thread.EndTimeRelativeMSec,
@@ -323,16 +332,16 @@ public class EtwConverterToFirefox : IDisposable
                 samples.TimeDeltas = new List<double>();
                 samples.WeightType = "samples";
 
-                const TraceEventID GCStartEventID = (TraceEventID)1;
-                const TraceEventID GCStopEventID = (TraceEventID)2;
-                const TraceEventID GCRestartEEStopEventID = (TraceEventID)3;
-                const TraceEventID GCHeapStatsEventID = (TraceEventID)4;
-                const TraceEventID GCCreateSegmentEventID = (TraceEventID)5;
-                const TraceEventID GCFreeSegmentEventID = (TraceEventID)6;
-                const TraceEventID GCRestartEEStartEventID = (TraceEventID)7;
-                const TraceEventID GCSuspendEEStopEventID = (TraceEventID)8;
-                const TraceEventID GCSuspendEEStartEventID = (TraceEventID)9;
-                const TraceEventID GCAllocationTickEventID = (TraceEventID)10;
+                const TraceEventID GCStartEventID = (TraceEventID) 1;
+                const TraceEventID GCStopEventID = (TraceEventID) 2;
+                const TraceEventID GCRestartEEStopEventID = (TraceEventID) 3;
+                const TraceEventID GCHeapStatsEventID = (TraceEventID) 4;
+                const TraceEventID GCCreateSegmentEventID = (TraceEventID) 5;
+                const TraceEventID GCFreeSegmentEventID = (TraceEventID) 6;
+                const TraceEventID GCRestartEEStartEventID = (TraceEventID) 7;
+                const TraceEventID GCSuspendEEStopEventID = (TraceEventID) 8;
+                const TraceEventID GCSuspendEEStartEventID = (TraceEventID) 9;
+                const TraceEventID GCAllocationTickEventID = (TraceEventID) 10;
 
                 double startTime = 0;
                 int currentThread = -1;
@@ -340,9 +349,9 @@ public class EtwConverterToFirefox : IDisposable
                 //double switchTimeOutMsec = 0.0;
                 foreach (var evt in thread.EventsInThread)
                 {
-                    if (evt.Opcode != (TraceEventOpcode)46)
+                    if (evt.Opcode != (TraceEventOpcode) 46)
                     {
-                        if (evt.Opcode == (TraceEventOpcode)0x24 && evt is CSwitchTraceData switchTraceData)
+                        if (evt.Opcode == (TraceEventOpcode) 0x24 && evt is CSwitchTraceData switchTraceData)
                         {
                             if (evt.ThreadID == thread.ThreadID && switchTraceData.OldThreadID != thread.ThreadID)
                             {
@@ -371,15 +380,18 @@ public class EtwConverterToFirefox : IDisposable
 
                                 var jitCompile = new JitCompileEvent
                                 {
-                                    FullName = $"{methodJittingStarted.MethodNamespace}.{methodJittingStarted.MethodName}{signature}",
+                                    FullName =
+                                        $"{methodJittingStarted.MethodNamespace}.{methodJittingStarted.MethodName}{signature}",
                                     MethodILSize = methodJittingStarted.MethodILSize
                                 };
 
-                                jitCompilePendingMethodId[methodJittingStarted.MethodID] = (jitCompile, evt.TimeStampRelativeMSec);
+                                jitCompilePendingMethodId[methodJittingStarted.MethodID] =
+                                    (jitCompile, evt.TimeStampRelativeMSec);
                             }
                             else if (evt is MethodLoadUnloadTraceDataBase methodLoadUnloadVerbose)
                             {
-                                if (jitCompilePendingMethodId.TryGetValue(methodLoadUnloadVerbose.MethodID, out var jitCompilePair))
+                                if (jitCompilePendingMethodId.TryGetValue(methodLoadUnloadVerbose.MethodID,
+                                        out var jitCompilePair))
                                 {
                                     jitCompilePendingMethodId.Remove(methodLoadUnloadVerbose.MethodID);
 
@@ -435,7 +447,7 @@ public class EtwConverterToFirefox : IDisposable
                                 markers.Category.Add(CategoryGC);
                                 markers.Phase.Add(FirefoxProfiler.MarkerPhase.Instance);
                                 markers.ThreadId.Add(profileThreadIndex);
-                                markers.Name.Add(GetFirefoxString($"GC Alloc ({thread.ThreadID})", profileThread));
+                                markers.Name.Add(GetFirefoxString($"{threadIndex} - GC Alloc ({thread.ThreadID})", profileThread));
 
                                 var allocationTickEvent = new GCAllocationTickEvent
                                 {
@@ -490,7 +502,8 @@ public class EtwConverterToFirefox : IDisposable
 
                                     gcSuspendEEEvents.Push((evt.TimeStampRelativeMSec, gcSuspendEEEvent));
                                 }
-                                else if (evt.ID == GCSuspendEEStopEventID && evt is GCNoUserDataTraceData && gcSuspendEEEvents.Count > 0)
+                                else if (evt.ID == GCSuspendEEStopEventID && evt is GCNoUserDataTraceData &&
+                                         gcSuspendEEEvents.Count > 0)
                                 {
                                     var (gcSuspendEEEventStartTime, gcSuspendEEEvent) = gcSuspendEEEvents.Pop();
 
@@ -507,7 +520,8 @@ public class EtwConverterToFirefox : IDisposable
                                 {
                                     gcRestartEEEvents.Push(evt.TimeStampRelativeMSec);
                                 }
-                                else if (evt.ID == GCRestartEEStopEventID && evt is GCNoUserDataTraceData && gcRestartEEEvents.Count > 0)
+                                else if (evt.ID == GCRestartEEStopEventID && evt is GCNoUserDataTraceData &&
+                                         gcRestartEEEvents.Count > 0)
                                 {
                                     var gcRestartEEEventStartTime = gcRestartEEEvents.Pop();
 
@@ -545,15 +559,16 @@ public class EtwConverterToFirefox : IDisposable
                     var deltaTime = evt.TimeStampRelativeMSec - startTime;
                     samples.TimeDeltas.Add(deltaTime);
                     samples.Stack.Add(firefoxCallStackIndex);
-                    var cpuDeltaMs = (long)((evt.TimeStampRelativeMSec - switchTimeInMsec) * 1_000_000.0);
+                    var cpuDeltaMs = (long) ((evt.TimeStampRelativeMSec - switchTimeInMsec) * 1_000_000.0);
                     if (cpuDeltaMs > 0)
                     {
-                        samples.ThreadCPUDelta.Add((int)cpuDeltaMs);
+                        samples.ThreadCPUDelta.Add((int) cpuDeltaMs);
                     }
                     else
                     {
                         samples.ThreadCPUDelta.Add(0);
                     }
+
                     switchTimeInMsec = evt.TimeStampRelativeMSec;
                     samples.Length++;
                     startTime = evt.TimeStampRelativeMSec;
@@ -599,6 +614,14 @@ public class EtwConverterToFirefox : IDisposable
 
                 long previousTotalHeapSize = 0;
 
+                // Bug in Memory, they discard the first sample
+                // and it is then not recording the first TotalHeapSize which is the initial value
+                // So we force to create a dummy empty entry
+                // https://github.com/firefox-devtools/profiler/blob/e9fe870f2a85b1c8771b1d671eb316bd1f5723ec/src/profile-logic/profile-data.js#L1732-L1753
+                gcHeapStatsCounter.Samples.Time!.Add(0);
+                gcHeapStatsCounter.Samples.Count.Add(0);
+                gcHeapStatsCounter.Samples.Length++;
+                
                 foreach (var evt in gcHeapStatsEvents)
                 {
                     gcHeapStatsCounter.Samples.Time!.Add(evt.Item1);
