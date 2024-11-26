@@ -289,7 +289,7 @@ public class EtwUltraProfiler : IDisposable
 
         ultraProfilerOptions.LogProgress?.Invoke($"Merging ETL Files");
         // Merge file (and to force Volume mapping)
-        var etlFinalFile = $"{baseName}.etl";
+        var etlFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseName}.etl";
         TraceEventSession.Merge([kernelFileName, userFileName, rundownSession], etlFinalFile);
         //TraceEventSession.Merge([kernelFileName, userFileName], $"{baseName}.etl");
 
@@ -315,7 +315,8 @@ public class EtwUltraProfiler : IDisposable
         if (!ultraProfilerOptions.KeepMergedEtl)
         {
             File.Delete(etlFinalFile);
-            File.Delete($"{baseName}.etlx");
+            var etlxFinalFile = Path.ChangeExtension(etlFinalFile, ".etlx");
+            File.Delete(etlxFinalFile);
         }
         
         return jsonFinalFile;
@@ -333,7 +334,7 @@ public class EtwUltraProfiler : IDisposable
 
         var directory = Path.GetDirectoryName(etlFile);
         var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
-        var jsonFinalFile = $"{etlFileNameWithoutExtension}.json.gz";
+        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
         ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
         await using var stream = File.Create(jsonFinalFile);
         await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);

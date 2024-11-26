@@ -52,6 +52,19 @@ public class EtwUltraProfilerOptions
 
     public string? SymbolPathText { get; set; }
 
+    public string? BaseOutputFileName { get; set; }
+
+    public void EnsureDirectoryForBaseOutputFileName()
+    {
+        if (BaseOutputFileName == null) return;
+
+        var directory = Path.GetDirectoryName(BaseOutputFileName);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+    }
+
     public SymbolPath GetCachedSymbolPath()
     {
         var symbolPath = new SymbolPath();

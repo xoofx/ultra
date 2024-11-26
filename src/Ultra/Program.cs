@@ -39,6 +39,7 @@ internal class Program
                 new CommandUsage("Usage: {NAME} [Options] <pid | -- execName arg0 arg1...>"),
                 _,
                 new HelpOption(),
+                { "o|output=", "The base output {FILE} name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process to attach the profiler to.", (int pid) => { pidList.Add(pid); } },
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is 8190Hz = {options.CpuSamplingIntervalInMs:0.000}ms.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
@@ -90,6 +91,8 @@ internal class Program
                         options.ProgramPath = arguments[0];
                         options.Arguments.AddRange(arguments.AsSpan().Slice(1));
                     }
+
+                    options.EnsureDirectoryForBaseOutputFileName();
 
                     var etwProfiler = new EtwUltraProfiler();
                     Console.CancelKeyPress += (sender, eventArgs) =>
@@ -262,6 +265,7 @@ internal class Program
                 new CommandUsage("Usage: {NAME} --pid xxx <etl_file_name.etl>"),
                 _,
                 new HelpOption(),
+                { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process", (int pid) => { pidList.Add(pid); } },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 async (ctx, arguments) =>
@@ -327,6 +331,8 @@ internal class Program
                                             AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
                                         }
                                     };
+
+                                    options.EnsureDirectoryForBaseOutputFileName();
 
                                     fileOutput = await etwProfiler.Convert(etlFile, pidList, options);
                                 }

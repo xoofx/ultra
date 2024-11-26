@@ -137,25 +137,20 @@ This is the main command to profile an application - Only working within an elev
 Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
 
   -h, -?, --help                    Show this message and exit
+  -o, --output=FILE                 The base output FILE name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.
       --pid=PID                     The PID of the process to attach the profiler to.
-      --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default
-                                      is 8190Hz = 0.122ms.
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;
-                                      SRV*C:\Users\alexa\AppData\Local\Temp\
-                                      SymbolCache*https://msdl.microsoft.com/download/
-                                      symbols;SRV*C:\Users\alexa\AppData\Local\Temp\
-                                      SymbolCache*https://symbols.nuget.org/download/
+      --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default is 8190Hz = 0.122ms.
+      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
+                                      Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
+                                      Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
                                       symbols`.
       --keep-merged-etl-file        Keep the merged ETL file.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
-      --mode=VALUE                  Defines how the stdout/stderr of a program
-                                      explicitly started by ultra should be
-                                      integrated in its output. Default is `silent`
-                                      which will not mix program's output. The other
-                                      options are: `raw` is going to mix ultra and
-                                      program output together in a raw output. `live`
-                                      is going to mix ultra and program output within
-                                      a live table.
+      --mode=VALUE                  Defines how the stdout/stderr of a program explicitly started by ultra should be
+                                      integrated in its output. Default is `silent` which will not mix program's
+                                      output. The other options are: `raw` is going to mix ultra and program output
+                                      together in a raw output. `live` is going to mix ultra and program output
+                                      within a live table.
 ```
 
 ### Convert
@@ -168,11 +163,10 @@ It requires a list of PID in order to only produce results for these processes.
 Usage: ultra convert --pid xxx <etl_file_name.etl>
 
   -h, -?, --help                    Show this message and exit
+  -o, --output=FILE                 The base output FILE name. Default is the input file name without the extension.
       --pid=PID                     The PID of the process
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;
-                                      SRV*C:\Users\alexa\AppData\Local\Temp\
-                                      SymbolCache*https://msdl.microsoft.com/download/
-                                      symbols;SRV*C:\Users\alexa\AppData\Local\Temp\
-                                      SymbolCache*https://symbols.nuget.org/download/
+      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
+                                      Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
+                                      Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
                                       symbols`.
 ```
