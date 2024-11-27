@@ -145,6 +145,8 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
                                       Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
                                       symbols`.
       --paused                      Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
+      --delay=VALUE                 Starts profiling after a specific delay (seconds). Default is 0s.
+      --duration=VALUE              Run the profiler for a maximum duration (seconds). Default is 120s
       --keep-merged-etl-file        Keep the merged ETL file.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
       --mode=VALUE                  Defines how the stdout/stderr of a program explicitly started by ultra should be

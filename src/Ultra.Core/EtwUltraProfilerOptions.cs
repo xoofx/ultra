@@ -16,6 +16,8 @@ public class EtwUltraProfilerOptions
         CpuSamplingIntervalInMs = 1000.0f / 8190.0f;
         KeepMergedEtl = false;
         KeepEtlIntermediateFiles = false;
+        DelayInSeconds = 0.0; // 0 seconds
+        DurationInSeconds = 120.0; // 120 seconds
     }
 
     public List<int> ProcessIds { get; } = new();
@@ -31,6 +33,10 @@ public class EtwUltraProfilerOptions
     public int TimeOutAfterInMs { get; set; }
 
     public bool Paused { get; set; }
+
+    public double DelayInSeconds { get; set; }
+
+    public double DurationInSeconds { get; set; }
 
     public EtwUltraProfilerConsoleMode ConsoleMode { get; set; }
 

@@ -1,13 +1,11 @@
-using System;
-using System.Diagnostics.Tracing;
+// Copyright (c) Alexandre Mutel. All rights reserved.
+// Licensed under the BSD-Clause 2 license.
+// See license.txt file in the project root for full license information.
 using System.Text;
 using ByteSizeLib;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Primitives;
 using Spectre.Console;
 using Ultra.Core;
 using XenoAtom.CommandLine;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace Ultra;
 
@@ -44,6 +42,8 @@ internal class Program
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is 8190Hz = {options.CpuSamplingIntervalInMs:0.000}ms.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
+                { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
+                { "duration=", $"Run the profiler for a maximum duration (seconds). Default is {options.DurationInSeconds}s", (double duration) => options.DurationInSeconds = duration },
                 { "keep-merged-etl-file", "Keep the merged ETL file.", v => options.KeepMergedEtl = v is not null },
                 { "keep-intermediate-etl-files", "Keep the intermediate ETL files before merging.", v => options.KeepEtlIntermediateFiles = v is not null },
                 { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
