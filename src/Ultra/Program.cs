@@ -43,6 +43,7 @@ internal class Program
                 { "pid=", "The {PID} of the process to attach the profiler to.", (int pid) => { pidList.Add(pid); } },
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is 8190Hz = {options.CpuSamplingIntervalInMs:0.000}ms.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
+                { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
                 { "keep-merged-etl-file", "Keep the merged ETL file.", v => options.KeepMergedEtl = v is not null },
                 { "keep-intermediate-etl-files", "Keep the intermediate ETL files before merging.", v => options.KeepEtlIntermediateFiles = v is not null },
                 { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
@@ -92,9 +93,12 @@ internal class Program
                         options.Arguments.AddRange(arguments.AsSpan().Slice(1));
                     }
 
+                    AnsiConsole.MarkupLine($"[green]You can press CTRL+C to stop profiling before the end of the process[/]");
+
                     options.EnsureDirectoryForBaseOutputFileName();
 
                     var etwProfiler = new EtwUltraProfiler();
+
                     Console.CancelKeyPress += (sender, eventArgs) =>
                     {
                         AnsiConsole.WriteLine();
@@ -106,7 +110,39 @@ internal class Program
                             AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
                         }
                     };
-                    
+
+                    // Handle paused
+                    if (options.Paused)
+                    {
+                        Console.TreatControlCAsInput = true;
+
+                        options.ShouldStartProfiling = () =>
+                        {
+                            AnsiConsole.MarkupLine("[green]Press SPACE or ENTER to start profiling[/]");
+                            var key = Console.ReadKey(true);
+                            bool startProfiling = key.Key == ConsoleKey.Spacebar || key.Key == ConsoleKey.Enter;
+
+                            bool isCtrlC = key.Modifiers == ConsoleModifiers.Control && key.Key == ConsoleKey.C;
+                            if (startProfiling || isCtrlC)
+                            {
+                                // Restore the default behavior so that CancelKeyPress will be called later if CTRL+C is pressed
+                                Console.TreatControlCAsInput = false;
+                            }
+
+                            if (isCtrlC)
+                            {
+                                AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
+                                etwProfiler.Cancel();
+                            }
+                            else if (!startProfiling)
+                            {
+                                AnsiConsole.MarkupLine($"[darkorange]Key pressed {key.Modifiers} {key.Key}[/]");
+                            }
+                            
+                            return startProfiling;
+                        };
+                    }
+
                     if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Silent)
                     {
                         await AnsiConsole.Status()

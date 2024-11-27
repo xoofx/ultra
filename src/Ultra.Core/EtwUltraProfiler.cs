@@ -57,6 +57,11 @@ public class EtwUltraProfiler : IDisposable
 
     public async Task<string> Run(EtwUltraProfilerOptions ultraProfilerOptions)
     {
+        if (ultraProfilerOptions.Paused && ultraProfilerOptions.ShouldStartProfiling is null)
+        {
+            throw new ArgumentException("ShouldStartProfiling is required when Paused is set to true");
+        }
+        
         List<System.Diagnostics.Process> processList = new List<System.Diagnostics.Process>();
         if (ultraProfilerOptions.ProcessIds.Count > 0)
         {
@@ -142,39 +147,10 @@ public class EtwUltraProfiler : IDisposable
             using (_userSession)
             using (_kernelSession)
             {
-                _kernelSession.StopOnDispose = true;
-                _kernelSession.CircularBufferMB = 0;
-                _kernelSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
-                _kernelSession.StackCompression = false;
-
-                _userSession.StopOnDispose = true;
-                _userSession.CircularBufferMB = 0;
-                _userSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
-                _userSession.StackCompression = false;
-
-                var kernelEvents = KernelTraceEventParser.Keywords.Profile
-                                   | KernelTraceEventParser.Keywords.ContextSwitch
-                                   | KernelTraceEventParser.Keywords.ImageLoad
-                                   | KernelTraceEventParser.Keywords.Process
-                                   | KernelTraceEventParser.Keywords.Thread;
-                _kernelSession.EnableKernelProvider(kernelEvents, KernelTraceEventParser.Keywords.Profile);
-
-                var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
-                                ClrTraceEventParser.Keywords.Exception |
-                                ClrTraceEventParser.Keywords.GC |
-                                ClrTraceEventParser.Keywords.GCHeapAndTypeNames |
-                                ClrTraceEventParser.Keywords.Interop |
-                                ClrTraceEventParser.Keywords.JITSymbols |
-                                ClrTraceEventParser.Keywords.Jit |
-                                ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
-                                ClrTraceEventParser.Keywords.Loader |
-                                ClrTraceEventParser.Keywords.Stack |
-                                ClrTraceEventParser.Keywords.StartEnumeration;
-
-                _userSession.EnableProvider(
-                    ClrTraceEventParser.ProviderGuid,
-                    TraceEventLevel.Verbose, // For call stacks.
-                    (ulong)jitEvents, options);
+                if (!ultraProfilerOptions.Paused)
+                {
+                    EnableProfiling(options, ultraProfilerOptions);
+                }
 
                 HashSet<Process> exitedProcessList = new();
 
@@ -191,6 +167,22 @@ public class EtwUltraProfiler : IDisposable
                     singleProcess ??= processState.Process;
                 }
 
+                // Wait for the process to start
+                if (ultraProfilerOptions.Paused)
+                {
+                    while (!ultraProfilerOptions.ShouldStartProfiling!() && !_cancelRequested && !_stopRequested)
+                    {
+                    }
+
+                    // If we have a cancel request, we don't start the profiling
+                    if (_cancelRequested || _stopRequested)
+                    {
+                        throw new InvalidOperationException("CTRL+C requested");
+                    }
+
+                    EnableProfiling(options, ultraProfilerOptions);
+                }
+                
                 foreach (var process in processList)
                 {
                     ultraProfilerOptions.LogProgress?.Invoke($"Start Profiling Process {process.ProcessName} ({process.Id})");
@@ -320,6 +312,43 @@ public class EtwUltraProfiler : IDisposable
         }
         
         return jsonFinalFile;
+    }
+
+    private void EnableProfiling(TraceEventProviderOptions options, EtwUltraProfilerOptions ultraProfilerOptions)
+    {
+        _kernelSession.StopOnDispose = true;
+        _kernelSession.CircularBufferMB = 0;
+        _kernelSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
+        _kernelSession.StackCompression = false;
+
+        _userSession.StopOnDispose = true;
+        _userSession.CircularBufferMB = 0;
+        _userSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
+        _userSession.StackCompression = false;
+
+        var kernelEvents = KernelTraceEventParser.Keywords.Profile
+                           | KernelTraceEventParser.Keywords.ContextSwitch
+                           | KernelTraceEventParser.Keywords.ImageLoad
+                           | KernelTraceEventParser.Keywords.Process
+                           | KernelTraceEventParser.Keywords.Thread;
+        _kernelSession.EnableKernelProvider(kernelEvents, KernelTraceEventParser.Keywords.Profile);
+
+        var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
+                        ClrTraceEventParser.Keywords.Exception |
+                        ClrTraceEventParser.Keywords.GC |
+                        ClrTraceEventParser.Keywords.GCHeapAndTypeNames |
+                        ClrTraceEventParser.Keywords.Interop |
+                        ClrTraceEventParser.Keywords.JITSymbols |
+                        ClrTraceEventParser.Keywords.Jit |
+                        ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
+                        ClrTraceEventParser.Keywords.Loader |
+                        ClrTraceEventParser.Keywords.Stack |
+                        ClrTraceEventParser.Keywords.StartEnumeration;
+
+        _userSession.EnableProvider(
+            ClrTraceEventParser.ProviderGuid,
+            TraceEventLevel.Verbose, // For call stacks.
+            (ulong)jitEvents, options);
     }
 
     public async Task<string> Convert(string etlFile, List<int> pIds, EtwUltraProfilerOptions ultraProfilerOptions)
