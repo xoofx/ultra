@@ -144,6 +144,7 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
                                       Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
                                       Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
                                       symbols`.
+      --paused                      Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
       --keep-merged-etl-file        Keep the merged ETL file.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
       --mode=VALUE                  Defines how the stdout/stderr of a program explicitly started by ultra should be
