@@ -13,6 +13,9 @@ using Microsoft.Diagnostics.Tracing.Session;
 
 namespace Ultra.Core;
 
+/// <summary>
+/// A profiler that uses Event Tracing for Windows (ETW) to collect performance data.
+/// </summary>
 public class EtwUltraProfiler : IDisposable
 {
     private TraceEventSession? _userSession;
@@ -23,13 +26,18 @@ public class EtwUltraProfiler : IDisposable
     private readonly Stopwatch _profilerClock;
     private TimeSpan _lastTimeProgress;
 
-
+    /// <summary>
+    /// Initializes a new instance of the <see cref="EtwUltraProfiler"/> class.
+    /// </summary>
     public EtwUltraProfiler()
     {
         _profilerClock = new Stopwatch();
     }
 
-
+    /// <summary>
+    /// Requests to cancel the profiling session.
+    /// </summary>
+    /// <returns>True if the profiling session was already canceled; otherwise, false.</returns>
     public bool Cancel()
     {
         if (!_cancelRequested)
@@ -48,22 +56,36 @@ public class EtwUltraProfiler : IDisposable
         }
     }
 
-    private void WaitForCleanCancel()
+    /// <summary>
+    /// Releases all resources used by the <see cref="EtwUltraProfiler"/> class.
+    /// </summary>
+    public void Dispose()
     {
-        if (_cleanCancel is not null)
-        {
-            _cleanCancel.WaitOne();
-            _cleanCancel.Dispose();
-            _cleanCancel = null;
-        }
+        _userSession?.Dispose();
+        _userSession = null;
+        _kernelSession?.Dispose();
+        _kernelSession = null;
+        _cleanCancel?.Dispose();
+        _cleanCancel = null;
     }
 
+    /// <summary>
+    /// Determines whether the current process is running with elevated privileges.
+    /// </summary>
+    /// <returns>True if the current process is running with elevated privileges; otherwise, false.</returns>
     public static bool IsElevated()
     {
         var isElevated = TraceEventSession.IsElevated();
         return isElevated.HasValue && isElevated.Value;
     }
 
+    /// <summary>
+    /// Runs the profiler with the specified options.
+    /// </summary>
+    /// <param name="ultraProfilerOptions">The options for the profiler.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
+    /// <exception cref="ArgumentException">Thrown when the options are invalid.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when a cancel request is received.</exception>
     public async Task<string> Run(EtwUltraProfilerOptions ultraProfilerOptions)
     {
         if (ultraProfilerOptions.Paused && ultraProfilerOptions.ShouldStartProfiling is null)
@@ -97,7 +119,7 @@ public class EtwUltraProfiler : IDisposable
                 }
             }
         }
-        
+
         if (processList.Count == 0 && ultraProfilerOptions.ProgramPath is null)
         {
             throw new ArgumentException("pid is required or an executable with optional arguments");
@@ -106,7 +128,7 @@ public class EtwUltraProfiler : IDisposable
         string? processName = null;
 
         System.Diagnostics.Process? singleProcess = null;
-        
+
         if (processList.Count == 1 && ultraProfilerOptions.ProgramPath is null)
         {
             singleProcess = processList[0];
@@ -130,12 +152,12 @@ public class EtwUltraProfiler : IDisposable
         {
             baseName = $"{baseName}_pid_{singleProcess.Id}";
         }
-        
+
         var options = new TraceEventProviderOptions()
         {
             StacksEnabled = true,
         };
-        
+
         // Filter the requested process ids
         if (processList.Count > 0)
         {
@@ -151,7 +173,7 @@ public class EtwUltraProfiler : IDisposable
         {
             options.ProcessNameFilter = [Path.GetFileName(ultraProfilerOptions.ProgramPath)];
         }
-        
+
         var kernelFileName = $"{baseName}.kernel.etl";
         var userFileName = $"{baseName}.user.etl";
 
@@ -203,7 +225,7 @@ public class EtwUltraProfiler : IDisposable
                         throw new InvalidOperationException("CTRL+C requested");
                     }
                 }
-                
+
                 await EnableProfiling(options, ultraProfilerOptions);
 
                 // If we haven't started the program yet, we start it now (for explicit program path)
@@ -255,7 +277,7 @@ public class EtwUltraProfiler : IDisposable
                         break;
                     }
 
-                } // Needed for JIT Compile code that was already compiled. 
+                } // Needed for JIT Compile code that was already compiled.
 
                 _kernelSession.Stop();
                 _userSession.Stop();
@@ -307,7 +329,7 @@ public class EtwUltraProfiler : IDisposable
                 ClrRundownTraceEventParser.ProviderGuid,
                 TraceEventLevel.Verbose,
                 (ulong)(ClrRundownTraceEventParser.Keywords.Default & ~ClrRundownTraceEventParser.Keywords.Loader), options);
-            
+
             await WaitForStaleFile(rundownSession, ultraProfilerOptions);
         }
 
@@ -347,7 +369,37 @@ public class EtwUltraProfiler : IDisposable
             var etlxFinalFile = Path.ChangeExtension(etlFinalFile, ".etlx");
             File.Delete(etlxFinalFile);
         }
-        
+
+        return jsonFinalFile;
+    }
+
+    /// <summary>
+    /// Converts the ETL file to a compressed JSON file in the Firefox Profiler format.
+    /// </summary>
+    /// <param name="etlFile">The path to the ETL file.</param>
+    /// <param name="pIds">The list of process IDs to include in the conversion.</param>
+    /// <param name="ultraProfilerOptions">The options for the profiler.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when a stop request is received.</exception>
+    public async Task<string> Convert(string etlFile, List<int> pIds, EtwUltraProfilerOptions ultraProfilerOptions)
+    {
+        var etlProcessor = new EtwConverterToFirefox();
+        var profile = etlProcessor.Convert(etlFile, pIds, ultraProfilerOptions);
+
+        if (_stopRequested)
+        {
+            throw new InvalidOperationException("CTRL+C requested");
+        }
+
+        var directory = Path.GetDirectoryName(etlFile);
+        var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
+        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
+        ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
+        await using var stream = File.Create(jsonFinalFile);
+        await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
+        await JsonSerializer.SerializeAsync(gzipStream, profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
+        gzipStream.Flush();
+
         return jsonFinalFile;
     }
 
@@ -422,27 +474,6 @@ public class EtwUltraProfiler : IDisposable
         _profilerClock.Restart();
     }
 
-    public async Task<string> Convert(string etlFile, List<int> pIds, EtwUltraProfilerOptions ultraProfilerOptions)
-    {
-        var etlProcessor = new EtwConverterToFirefox();
-        var profile = etlProcessor.Convert(etlFile, pIds, ultraProfilerOptions);
-
-        if (_stopRequested)
-        {
-            throw new InvalidOperationException("CTRL+C requested");
-        }
-
-        var directory = Path.GetDirectoryName(etlFile);
-        var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
-        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
-        ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
-        await using var stream = File.Create(jsonFinalFile);
-        await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
-        await JsonSerializer.SerializeAsync(gzipStream, profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
-        gzipStream.Flush();
-
-        return jsonFinalFile;
-    }
 
     private async Task WaitForStaleFile(string file, EtwUltraProfilerOptions options)
     {
@@ -481,7 +512,6 @@ public class EtwUltraProfiler : IDisposable
         }
     }
 
-
     private static ProcessState StartProcess(EtwUltraProfilerOptions ultraProfilerOptions)
     {
         var mode = ultraProfilerOptions.ConsoleMode;
@@ -497,7 +527,7 @@ public class EtwUltraProfiler : IDisposable
         }
 
         ultraProfilerOptions.LogProgress?.Invoke($"Starting Process {startInfo.FileName} {string.Join(" ", startInfo.ArgumentList)}");
-        
+
         if (mode == EtwUltraProfilerConsoleMode.Silent)
         {
             startInfo.UseShellExecute = true;
@@ -513,7 +543,7 @@ public class EtwUltraProfiler : IDisposable
             startInfo.RedirectStandardOutput = true;
             startInfo.RedirectStandardError = true;
             startInfo.RedirectStandardInput = true;
-            
+
             process.OutputDataReceived += (sender, args) =>
             {
                 if (args.Data != null)
@@ -559,7 +589,17 @@ public class EtwUltraProfiler : IDisposable
 
         return state;
     }
-    
+
+    private void WaitForCleanCancel()
+    {
+        if (_cleanCancel is not null)
+        {
+            _cleanCancel.WaitOne();
+            _cleanCancel.Dispose();
+            _cleanCancel = null;
+        }
+    }
+
     private class ProcessState
     {
         public ProcessState(Process process)
@@ -570,15 +610,5 @@ public class EtwUltraProfiler : IDisposable
         public readonly Process Process;
 
         public bool HasExited;
-    }
-    
-    public void Dispose()
-    {
-        _userSession?.Dispose();
-        _userSession = null;
-        _kernelSession?.Dispose();
-        _kernelSession = null;
-        _cleanCancel?.Dispose();
-        _cleanCancel = null;
     }
 }
