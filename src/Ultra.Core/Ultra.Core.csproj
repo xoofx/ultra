@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Description>Ultra is a an advanced profiler for .NET Applications available on Windows.</Description>
+    <Description>Ultra is an advanced profiler for .NET Applications available on Windows.</Description>
     <Copyright>Alexandre Mutel</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Authors>Alexandre Mutel</Authors>

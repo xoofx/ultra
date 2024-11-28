@@ -2,7 +2,7 @@
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/xoofx/ultra/main/img/ultra.png">
 
-Ultra is a an advanced profiler for .NET Applications available on Windows.
+Ultra is an advanced profiler for .NET Applications available on Windows.
 
 > 📽️ Check this [video](https://vimeo.com/1030852299) for a quick tour of ultra! 📽️
 
