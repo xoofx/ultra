@@ -78,9 +78,9 @@ public class FirefoxProfilerTests : VerifyBase
         profile.Meta.SampleUnits.EventDelay = "ms";
         profile.Meta.SampleUnits.ThreadCPUDelta = "ns";
 
-        profile.Meta.Platform = Environment.OSVersion.ToString(); // "Windows";
-        profile.Meta.Oscpu = RuntimeInformation.ProcessArchitecture.ToString();
-        profile.Meta.LogicalCPUs = Environment.ProcessorCount;
+        profile.Meta.Platform = "Windows";
+        profile.Meta.Oscpu = "AMD Ryzen 9 5950X 16-Core Processor";
+        profile.Meta.LogicalCPUs = 16;
 
         // We don't have access to physical CPUs
         //profile.Meta.PhysicalCPUs = Environment.ProcessorCount / 2;

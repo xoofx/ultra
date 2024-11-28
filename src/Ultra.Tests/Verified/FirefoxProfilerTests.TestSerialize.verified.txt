@@ -35,9 +35,9 @@
     "stackwalk": 1,
     "version": 29,
     "preprocessedProfileVersion": 50,
-    "oscpu": "X64",
-    "platform": "Microsoft Windows NT 10.0.22631.0",
-    "logicalCPUs": 32,
+    "oscpu": "AMD Ryzen 9 5950X 16-Core Processor",
+    "platform": "Windows",
+    "logicalCPUs": 16,
     "symbolicated": true,
     "markerSchema": [
       {
