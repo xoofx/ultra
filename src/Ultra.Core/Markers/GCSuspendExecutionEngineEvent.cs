@@ -6,25 +6,45 @@ using System.Text.Json;
 
 namespace Ultra.Core.Markers;
 
+/// <summary>
+/// Represents an event that marks the suspension of the execution engine by the garbage collector.
+/// </summary>
 public class GCSuspendExecutionEngineEvent : FirefoxProfiler.MarkerPayload
 {
+    /// <summary>
+    /// The type identifier for this event.
+    /// </summary>
     public const string TypeId = "dotnet.gc.suspend_execution_engine";
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="GCSuspendExecutionEngineEvent"/> class.
+    /// </summary>
     public GCSuspendExecutionEngineEvent()
     {
         Type = TypeId;
     }
 
-    public string Reason { get; set; }
+    /// <summary>
+    /// Gets or sets the reason for the suspension.
+    /// </summary>
+    public string? Reason { get; set; }
 
+    /// <summary>
+    /// Gets or sets the count of suspensions.
+    /// </summary>
     public int Count { get; set; }
-    
+
+    /// <inheritdoc />
     protected internal override void WriteJson(Utf8JsonWriter writer, FirefoxProfiler.MarkerPayload payload, JsonSerializerOptions options)
     {
         writer.WriteString("reason", Reason);
         writer.WriteNumber("count", Count);
     }
 
+    /// <summary>
+    /// Returns the schema for this marker.
+    /// </summary>
+    /// <returns>The schema for this marker.</returns>
     public static FirefoxProfiler.MarkerSchema Schema()
         => new()
         {

@@ -11,10 +11,10 @@ using static Ultra.Core.FirefoxProfiler;
 namespace Ultra.Tests;
 
 /// <summary>
-/// No real tests here yet, just to check the serialization of Firefox profiler format
+/// Basic tests for JSON serialization/deserialization of Firefox Profiler format.
 /// </summary>
 [TestClass]
-public class FirefoxProfilerTests
+public class FirefoxProfilerTests : VerifyBase
 {
     [TestMethod]
     public void TestMarker()
@@ -23,159 +23,47 @@ public class FirefoxProfilerTests
                          { "type": "hello", "value": 1 }
                          """;
         var marker = JsonSerializer.Deserialize(markerText, JsonProfilerContext.Default.MarkerPayload);
+
+        Assert.IsNotNull(marker);
+        Assert.AreEqual("hello", marker.Type);
+        Assert.IsNotNull(marker.ExtensionData);
+        Assert.IsTrue(marker.ExtensionData.ContainsKey("value"), "The extension data is missing value");
+        Assert.AreEqual(1.0, marker.ExtensionData["value"]);
     }
 
     [TestMethod]
-    public void TestSimple()
+    public async Task TestSerialize()
     {
-        var profile = new Profile();
+        var profile = CreateProfile();
 
-        profile.Meta.StartTime = 0;
-        profile.Meta.EndTime = 2000;
-        profile.Meta.Version = 29;
-        profile.Meta.PreprocessedProfileVersion = 50;
+        var newOptions = new JsonSerializerOptions(JsonProfilerContext.Default.Options)
+        {
+            WriteIndented = true
+        };
 
-        profile.Meta.Product = "myapp.exe";
-        profile.Meta.InitialSelectedThreads = new();
-        profile.Meta.InitialSelectedThreads.Add(0);
+        var result = JsonSerializer.Serialize<Profile>(profile, newOptions);
 
-        profile.Meta.Platform = "Windows";
-        profile.Meta.Oscpu = RuntimeInformation.ProcessArchitecture.ToString();
-        profile.Meta.LogicalCPUs = Environment.ProcessorCount;
-        // We don't have access to physical CPUs
-        //profile.Meta.PhysicalCPUs = Environment.ProcessorCount / 2;
-        //profile.Meta.CPUName = ""; // TBD
-
-
-        profile.Meta.InitialVisibleThreads = new();
-        profile.Meta.InitialVisibleThreads.Add(0);
-
-        profile.Meta.Stackwalk = 1;
-
-
-        profile.Meta.Interval = 1.0;
-        profile.Meta.Categories =
-        [
-            new Category()
-            {
-                Name = "Kernel",
-                Color = ProfileColor.Orange,
-            },
-            new Category()
-            {
-                Name = "Native User",
-                Color = ProfileColor.Blue,
-            },
-            new Category()
-            {
-                Name = ".NET",
-                Color = ProfileColor.Green,
-            },
-            new Category()
-            {
-                Name = "GC",
-                Color = ProfileColor.Yellow,
-            },
-            new Category()
-            {
-                Name = "JIT",
-                Color = ProfileColor.Purple,
-            },
-        ];
-
-        var thread = new FirefoxProfiler.Thread();
-        thread.Name = "Main";
-        thread.Tid = "125";
-        thread.Pid = "My Process";
-
-        // Frame table
-        var frameTable = thread.FrameTable;
-        frameTable.Category.Add(0);
-        frameTable.Address.Add(-1);
-        frameTable.Line.Add(null);
-        frameTable.Column.Add(null);
-        frameTable.InlineDepth.Add(0);
-        frameTable.Subcategory.Add(null);
-        frameTable.Func.Add(0);
-        frameTable.NativeSymbol.Add(null);
-        frameTable.Implementation.Add(null);
-        frameTable.InnerWindowID.Add(null);
-        frameTable.Length = 1;
-
-        // Function table
-        var funcTable = thread.FuncTable;
-        funcTable.Name.Add(0); // myfunction
-        funcTable.IsJS.Add(false);
-        funcTable.RelevantForJS.Add(false);
-        funcTable.Resource.Add(0);
-        funcTable.LineNumber.Add(null);
-        funcTable.ColumnNumber.Add(null);
-        funcTable.Length = 1;
-
-        // Stack and prefix
-        var stackTable = thread.StackTable;
-        stackTable.Frame.Add(0);
-        stackTable.Prefix.Add(null);
-        stackTable.Category.Add(0);
-        stackTable.Subcategory.Add(0);
-        stackTable.Length = 1;
-
-        // Samples
-        var samples = thread.Samples;
-
-        samples.TimeDeltas = new();
-        samples.TimeDeltas.Add(10);
-        samples.Stack.Add(0);
-        samples.TimeDeltas.Add(10);
-        samples.Stack.Add(0);
-        samples.TimeDeltas.Add(10);
-        samples.Stack.Add(0);
-        samples.TimeDeltas.Add(10);
-        samples.Stack.Add(0);
-        samples.WeightType = "samples";
-        samples.Length = 4;
-        //samples.Responsiveness.Add(0);
-
-        var strings = thread.StringArray;
-        strings.Add("myfunction");
-
-        // Resource table
-        thread.ResourceTable.Name.Add(0);
-        thread.ResourceTable.Lib.Add(0);
-        thread.ResourceTable.Host.Add(null);
-        //unknown: 0,
-        //library: 1,
-        //addon: 2,
-        //webhost: 3,
-        //otherhost: 4,
-        //url: 5,
-        thread.ResourceTable.Type.Add(1);
-        thread.ResourceTable.Length = 1;
-        thread.ProcessType = "default";
-
-
-        //thread.JsAllocations = null;
-
-        profile.Threads.Add(thread);
-
-        var lib = new Lib();
-        lib.Name = "mylib";
-        lib.AddressStart = 0x10000000;
-        lib.AddressEnd = 0x20000000;
-        lib.AddressOffset = 0x0;
-        lib.Path = "/path/to/mylib";
-        lib.DebugName = "mylib.pdb";
-        lib.DebugPath = "/path/to/mylib.pdb";
-        lib.BreakpadId = "1234567890";
-        profile.Libs.Add(lib);
-
-        var result = JsonSerializer.Serialize(profile, JsonProfilerContext.Default.Profile);
-
-        Console.WriteLine(result);
+        await Verify(result);
     }
 
     [TestMethod]
-    public void TestSimpleWithAddresses()
+    public void TestDeserialize()
+    {
+        var profile = CreateProfile();
+
+        var newOptions = new JsonSerializerOptions(JsonProfilerContext.Default.Options)
+        {
+            WriteIndented = true
+        };
+
+        var result = JsonSerializer.Serialize<Profile>(profile, newOptions);
+        var newProfile = JsonSerializer.Deserialize<Profile>(result, newOptions);
+        var newSerialized = JsonSerializer.Serialize(newProfile, newOptions);
+
+        Assert.AreEqual(result, newSerialized);
+    }
+
+    private static FirefoxProfiler.Profile CreateProfile()
     {
         var profile = new Profile();
 
@@ -239,43 +127,6 @@ public class FirefoxProfilerTests
         ];
 
         profile.Meta.MarkerSchema.Add(JitCompileEvent.Schema());
-
-        //profile.Meta.MarkerSchema.Add(new FirefoxProfiler.MarkerSchema()
-        //{
-        //    Name = FirefoxProfiler.JitCompile.TypeId,
-
-        //    ChartLabel = "memory size (chart): {marker.data.memorySize} bytes - Hello",
-        //    TableLabel = "memory size (table): {marker.data.memorySize} bytes",
-
-        //    Display =
-        //    {
-        //        FirefoxProfiler.MarkerDisplayLocation.TimelineOverview,
-        //        FirefoxProfiler.MarkerDisplayLocation.TimelineMemory,
-        //        FirefoxProfiler.MarkerDisplayLocation.StackChart,
-        //        FirefoxProfiler.MarkerDisplayLocation.MarkerChart,
-        //        FirefoxProfiler.MarkerDisplayLocation.MarkerTable
-        //    },
-
-        //    Data =
-        //    {
-        //        new FirefoxProfiler.MarkerDataItem()
-        //        {
-        //            Format = FirefoxProfiler.MarkerFormatType.Integer,
-        //            Key = "memorySize",
-        //            Label = "Memory Size",
-        //        }
-        //    },
-
-        //    Graphs = new()
-        //    {
-        //        new FirefoxProfiler.MarkerGraph()
-        //        {
-        //            Key = "memorySize",
-        //            Type = FirefoxProfiler.MarkerGraphType.LineFilled,
-        //            Color = FirefoxProfiler.ProfileColor.Blue,
-        //        }
-        //    }
-        //});
 
         var thread = new FirefoxProfiler.Thread();
         thread.Name = "Main";
@@ -401,8 +252,6 @@ public class FirefoxProfilerTests
         lib.BreakpadId = "1234567890";
         profile.Libs.Add(lib);
 
-        var result = JsonSerializer.Serialize<Profile>(profile, JsonProfilerContext.Default.Options);
-
-        Console.WriteLine(result);
+        return profile;
     }
 }

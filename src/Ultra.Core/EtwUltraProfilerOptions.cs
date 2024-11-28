@@ -24,6 +24,7 @@ public class EtwUltraProfilerOptions
         KeepEtlIntermediateFiles = false;
         DelayInSeconds = 0.0; // 0 seconds
         DurationInSeconds = 120.0; // 120 seconds
+        MinimumCpuTimeBeforeThreadIsVisibleInMs = 10.0;
     }
 
     /// <summary>
@@ -135,6 +136,11 @@ public class EtwUltraProfilerOptions
     /// Gets or sets the base output file name.
     /// </summary>
     public string? BaseOutputFileName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the minimum CPU time before a thread is visible in milliseconds.
+    /// </summary>
+    public double MinimumCpuTimeBeforeThreadIsVisibleInMs { get; set; }
 
     /// <summary>
     /// Ensures that the directory for the base output file name exists.

@@ -1,0 +1,468 @@
+﻿{
+  "meta": {
+    "interval": 1,
+    "startTime": 0,
+    "endTime": 2000,
+    "processType": 0,
+    "categories": [
+      {
+        "name": "Kernel",
+        "color": "orange",
+        "subcategories": []
+      },
+      {
+        "name": "Native User",
+        "color": "blue",
+        "subcategories": []
+      },
+      {
+        "name": ".NET",
+        "color": "green",
+        "subcategories": []
+      },
+      {
+        "name": "GC",
+        "color": "yellow",
+        "subcategories": []
+      },
+      {
+        "name": "JIT",
+        "color": "purple",
+        "subcategories": []
+      }
+    ],
+    "product": "myapp.exe",
+    "stackwalk": 1,
+    "version": 29,
+    "preprocessedProfileVersion": 50,
+    "oscpu": "X64",
+    "platform": "Microsoft Windows NT 10.0.22631.0",
+    "logicalCPUs": 32,
+    "symbolicated": true,
+    "markerSchema": [
+      {
+        "name": "CC",
+        "tableLabel": "JIT Compile: {marker.data.fullName}, ILSize: {marker.data.methodILSize}",
+        "chartLabel": "JIT Compile: {marker.data.fullName}, ILSize: {marker.data.methodILSize}",
+        "display": [
+          "timeline-overview",
+          "marker-chart",
+          "marker-table"
+        ],
+        "data": [
+          {
+            "key": "fullName",
+            "label": "Full Name",
+            "format": "string"
+          },
+          {
+            "key": "methodILSize",
+            "label": "Method IL Size",
+            "format": "integer"
+          }
+        ]
+      }
+    ],
+    "sampleUnits": {
+      "time": "ms",
+      "eventDelay": "ms",
+      "threadCPUDelta": "ns"
+    },
+    "initialVisibleThreads": [
+      0
+    ],
+    "initialSelectedThreads": [
+      0
+    ]
+  },
+  "libs": [
+    {
+      "addressStart": 268435456,
+      "addressEnd": 536870912,
+      "addressOffset": 0,
+      "arch": "x86_64",
+      "name": "mylib",
+      "path": "/path/to/mylib",
+      "debugName": "mylib.pdb",
+      "debugPath": "/path/to/mylib.pdb",
+      "breakpadId": "1234567890"
+    }
+  ],
+  "threads": [
+    {
+      "processType": "default",
+      "processStartupTime": 0,
+      "registerTime": 0,
+      "pausedRanges": [],
+      "name": "Main",
+      "isMainThread": false,
+      "pid": "My Process",
+      "tid": "125",
+      "samples": {
+        "threadCPUDelta": [
+          10000000,
+          10000000,
+          10000000,
+          10000000
+        ],
+        "stack": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "timeDeltas": [
+          0,
+          10,
+          10,
+          10
+        ],
+        "weightType": "samples",
+        "length": 4
+      },
+      "markers": {
+        "data": [
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          },
+          {
+            "type": "CC",
+            "fullName": "World",
+            "methodILSize": 100
+          }
+        ],
+        "name": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ],
+        "startTime": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32,
+          34,
+          36,
+          38
+        ],
+        "endTime": [
+          1,
+          3,
+          5,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          21,
+          23,
+          25,
+          27,
+          29,
+          31,
+          33,
+          35,
+          37,
+          39
+        ],
+        "phase": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "category": [
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3,
+          3
+        ],
+        "threadId": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "length": 20
+      },
+      "stackTable": {
+        "frame": [
+          0
+        ],
+        "category": [
+          0
+        ],
+        "subcategory": [
+          0
+        ],
+        "prefix": [
+          null
+        ],
+        "length": 1
+      },
+      "frameTable": {
+        "address": [
+          0
+        ],
+        "inlineDepth": [
+          0
+        ],
+        "category": [
+          0
+        ],
+        "subcategory": [
+          null
+        ],
+        "func": [
+          0
+        ],
+        "nativeSymbol": [
+          0
+        ],
+        "innerWindowID": [
+          null
+        ],
+        "implementation": [
+          null
+        ],
+        "line": [
+          null
+        ],
+        "column": [
+          null
+        ],
+        "length": 1
+      },
+      "stringArray": [
+        "myfunction",
+        "myfunction (native symbols)",
+        "myfunction (resource)",
+        "Memory Size"
+      ],
+      "funcTable": {
+        "name": [
+          0
+        ],
+        "isJS": [
+          false
+        ],
+        "relevantForJS": [
+          false
+        ],
+        "resource": [
+          0
+        ],
+        "fileName": [],
+        "lineNumber": [
+          null
+        ],
+        "columnNumber": [
+          null
+        ],
+        "length": 1
+      },
+      "resourceTable": {
+        "lib": [
+          0
+        ],
+        "name": [
+          2
+        ],
+        "host": [
+          null
+        ],
+        "type": [
+          1
+        ],
+        "length": 1
+      },
+      "nativeSymbols": {
+        "libIndex": [
+          0
+        ],
+        "address": [
+          22
+        ],
+        "name": [
+          1
+        ],
+        "functionSize": [
+          null
+        ],
+        "length": 1
+      }
+    }
+  ]
+}

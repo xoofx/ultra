@@ -6,17 +6,18 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
+#pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
+
 // ReSharper disable InconsistentNaming
 
 namespace Ultra.Core;
 
-// https://github.com/firefox-devtools/profiler/blob/main/src/types/profile.js
-
-// Ideas: https://github.com/parttimenerd/jfrtofp/blob/main/src/main/kotlin/me/bechberger/jfrtofp/types/Marker.kt
-
-// Profile code source loading:
-// https://github.com/firefox-devtools/profiler/blob/e51f64485f85091e5c3f5fc692e69068b3324fbd/src/utils/special-paths.js#L52-L90
-
+/// <summary>
+/// The Firefox profiler JSON format.
+/// </summary>
+/// <remarks>
+/// This file was manually converted from https://github.com/xoofx/firefox-profiler/blob/main/src/types/profile.js
+/// </remarks>
 public static partial class FirefoxProfiler
 {
     [JsonSourceGenerationOptions(
@@ -1158,6 +1159,12 @@ public static partial class FirefoxProfiler
 
         public Dictionary<string, object?>? ExtensionData { get; set; }
 
+        /// <summary>
+        /// Writes the JSON representation of the current object.
+        /// </summary>
+        /// <param name="writer">The JSON writer.</param>
+        /// <param name="payload">The marker payload.</param>
+        /// <param name="options">The JSON serializer options.</param>
         protected internal virtual void WriteJson(Utf8JsonWriter writer, MarkerPayload payload, JsonSerializerOptions options)
         {
         }
@@ -1218,7 +1225,11 @@ public static partial class FirefoxProfiler
                             payload.ExtensionData[propertyName] = null;
                             break;
                         default:
+#pragma warning disable IL3050
+#pragma warning disable IL2026
                             payload.ExtensionData[propertyName] = JsonSerializer.Deserialize<object>(ref reader);
+#pragma warning restore IL2026
+#pragma warning restore IL3050
                             break;
                     }
                 }
@@ -1283,7 +1294,11 @@ public static partial class FirefoxProfiler
                             writer.WriteNullValue();
                             break;
                         default:
+#pragma warning disable IL3050
+#pragma warning disable IL2026
                             JsonSerializer.Serialize(writer, value);
+#pragma warning restore IL2026
+#pragma warning restore IL3050
                             break;
                     }
                 }

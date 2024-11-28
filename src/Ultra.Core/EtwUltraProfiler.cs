@@ -113,7 +113,7 @@ public class EtwUltraProfiler : IDisposable
                     var process = System.Diagnostics.Process.GetProcessById(pidToAttach);
                     processList.Add(process);
                 }
-                catch (ArgumentException ex)
+                catch (ArgumentException)
                 {
                     throw new ArgumentException($"Unable to find Process with pid {pidToAttach}");
                 }
@@ -383,8 +383,7 @@ public class EtwUltraProfiler : IDisposable
     /// <exception cref="InvalidOperationException">Thrown when a stop request is received.</exception>
     public async Task<string> Convert(string etlFile, List<int> pIds, EtwUltraProfilerOptions ultraProfilerOptions)
     {
-        var etlProcessor = new EtwConverterToFirefox();
-        var profile = etlProcessor.Convert(etlFile, pIds, ultraProfilerOptions);
+        var profile = EtwConverterToFirefox.Convert(etlFile, ultraProfilerOptions, pIds);
 
         if (_stopRequested)
         {
@@ -435,12 +434,12 @@ public class EtwUltraProfiler : IDisposable
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        _kernelSession.StopOnDispose = true;
+        _kernelSession!.StopOnDispose = true;
         _kernelSession.CircularBufferMB = 0;
         _kernelSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
         _kernelSession.StackCompression = false;
 
-        _userSession.StopOnDispose = true;
+        _userSession!.StopOnDispose = true;
         _userSession.CircularBufferMB = 0;
         _userSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
         _userSession.StackCompression = false;

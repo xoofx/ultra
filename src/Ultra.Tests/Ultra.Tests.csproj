@@ -9,7 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" />
-    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting"/>
+    <PackageReference Include="Verify.DiffPlex" />
+    <PackageReference Include="Verify.MSTest" />
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
 
   <ItemGroup>

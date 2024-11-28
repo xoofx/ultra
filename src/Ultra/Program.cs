@@ -9,6 +9,9 @@ using XenoAtom.CommandLine;
 
 namespace Ultra;
 
+/// <summary>
+/// Main entry point for the ultra command line.
+/// </summary>
 internal class Program
 {
     static async Task<int> Main(string[] args)
