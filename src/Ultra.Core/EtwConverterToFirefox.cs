@@ -128,12 +128,6 @@ public sealed class EtwConverterToFirefox : IDisposable
 
         foreach (var processId in processIds)
         {
-            // Reset all maps and default values before processing a new process
-            _mapModuleFileIndexToFirefox.Clear();
-            _setManagedModules.Clear();
-            _clrJitModuleIndex = ModuleFileIndex.Invalid;
-            _coreClrModuleIndex = ModuleFileIndex.Invalid;
-
             var process = _traceLog.Processes.LastProcessWithID(processId);
 
             ConvertProcess(process);
@@ -559,34 +553,37 @@ public sealed class EtwConverterToFirefox : IDisposable
     /// <param name="process">The process to load the modules.</param>
     private void LoadModules(TraceProcess process)
     {
-        _options.LogProgress?.Invoke($"Loading Modules for process {process.Name}");
+        _options.LogProgress?.Invoke($"Loading Modules for process {process.Name} ({process.ProcessID})");
+
+        _setManagedModules.Clear();
+        _clrJitModuleIndex = ModuleFileIndex.Invalid;
+        _coreClrModuleIndex = ModuleFileIndex.Invalid;
 
         var allModules = process.LoadedModules.ToList();
         for (var i = 0; i < allModules.Count; i++)
         {
             var module = allModules[i];
-            if (_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
+            if (!_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
             {
-                continue; // Skip in case
+                _options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
+
+                var lib = new FirefoxProfiler.Lib
+                {
+                    Name = module.Name,
+                    AddressStart = module.ImageBase,
+                    AddressEnd = module.ModuleFile.ImageEnd,
+                    Path = module.ModuleFile.FilePath,
+                    DebugPath = module.ModuleFile.PdbName,
+                    DebugName = module.ModuleFile.PdbName,
+                    BreakpadId = $"0x{module.ModuleID:X16}",
+                    Arch = "x64" // TODO
+                };
+
+                _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
+
+                _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, _profile.Libs.Count);
+                _profile.Libs.Add(lib);
             }
-
-            _options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
-
-            var lib = new FirefoxProfiler.Lib
-            {
-                Name = module.Name,
-                AddressStart = module.ImageBase,
-                AddressEnd = module.ModuleFile.ImageEnd,
-                Path = module.ModuleFile.FilePath,
-                DebugPath = module.ModuleFile.PdbName,
-                DebugName = module.ModuleFile.PdbName,
-                BreakpadId = $"0x{module.ModuleID:X16}",
-                Arch = "x64" // TODO
-            };
-
-            _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
-            _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, _profile.Libs.Count);
-            _profile.Libs.Add(lib);
 
             var fileName = Path.GetFileName(module.FilePath);
             if (fileName.Equals("clrjit.dll", StringComparison.OrdinalIgnoreCase))
@@ -832,12 +829,13 @@ public sealed class EtwConverterToFirefox : IDisposable
             funcTable.ColumnNumber.Add(null);
 
             var moduleIndex = _traceLog.CodeAddresses.ModuleFileIndex(codeAddressIndex);
-            if (moduleIndex != ModuleFileIndex.Invalid)
+            if (moduleIndex != ModuleFileIndex.Invalid && _mapModuleFileIndexToFirefox.TryGetValue(moduleIndex, out var firefoxModuleIndex))
             {
-                funcTable.Resource.Add(profileThread.ResourceTable.Length); // TODO
+                funcTable.Resource.Add(profileThread.ResourceTable.Length);
+
                 var moduleName = Path.GetFileName(_traceLog.ModuleFiles[moduleIndex].FilePath);
                 profileThread.ResourceTable.Name.Add(GetOrCreateString(moduleName, profileThread));
-                profileThread.ResourceTable.Lib.Add(_mapModuleFileIndexToFirefox[moduleIndex]);
+                profileThread.ResourceTable.Lib.Add(firefoxModuleIndex);
                 profileThread.ResourceTable.Length++;
             }
             else
