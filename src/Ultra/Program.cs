@@ -266,14 +266,14 @@ internal class Program
 
                                 options.ProgramLogStdout = (text) =>
                                 {
-                                    statusTable.LogText(text);
+                                    statusTable.LogText(Markup.Escape(text));
                                     statusTable.UpdateTable();
                                     liveCtx.Refresh();
                                 };
 
                                 options.ProgramLogStderr = (text) =>
                                 {
-                                    statusTable.LogText(text);
+                                    statusTable.LogText(Markup.Escape(text));
                                     statusTable.UpdateTable();
                                     liveCtx.Refresh();
                                 };
