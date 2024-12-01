@@ -5,6 +5,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <EnableMSTestRunner>true</EnableMSTestRunner>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ultra.Core\Ultra.Core.csproj" />
+    <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
   </ItemGroup>
 
 </Project>
