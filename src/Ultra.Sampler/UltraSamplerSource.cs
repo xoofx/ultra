@@ -4,11 +4,12 @@
 
 using System.Diagnostics.Tracing;
 using System.Runtime.CompilerServices;
+using Ultra.Sampler.MacOS;
 
 namespace Ultra.Sampler;
 
 [EventSource(Name = UltraSamplerParser.Name, Guid = UltraSamplerParser.IdAsString)]
-public class UltraSamplerSource : EventSource
+internal sealed class UltraSamplerSource : EventSource
 {
     public static readonly UltraSamplerSource Log = new();
 
@@ -16,40 +17,35 @@ public class UltraSamplerSource : EventSource
     {
     }
 
-    [Event(UltraSamplerParser.NativeCallStackEvent, Level = EventLevel.Verbose, Message = "Thread {0} Callstack")]
+    [Event(UltraSamplerParser.NativeCallStackEvent, Level = EventLevel.Verbose, Message = "NativeCallstackEvent Thread {0} with {2} frames")]
     [SkipLocalsInit]
-    public unsafe void Callstack(ulong threadId, ulong* pFrames, int count)
+    public unsafe void OnNativeCallstack(ulong threadId, ulong* pFrames, int count)
     {
-        if (IsEnabled())
-        {
-            Unsafe.SkipInit(out EventData2 evt);
-            evt.Data1.DataPointer = (nint)(void*)&threadId;
-            evt.Data1.Size = sizeof(ulong);
-            evt.Data2.DataPointer = (nint)pFrames;
-            evt.Data2.Size = count * sizeof(ulong);
-            WriteEventCore(UltraSamplerParser.NativeCallStackEvent, 2, &evt.Data1);
-        }
+
+        Unsafe.SkipInit(out EventData2 evt);
+        evt.Data1.DataPointer = (nint)(void*)&threadId;
+        evt.Data1.Size = sizeof(ulong);
+        evt.Data2.DataPointer = (nint)pFrames;
+        evt.Data2.Size = count * sizeof(ulong);
+        WriteEventCore(UltraSamplerParser.NativeCallStackEvent, 2, &evt.Data1);
     }
 
-    [Event(UltraSamplerParser.NativeModuleEvent, Level = EventLevel.Verbose, Message = "NativeModule {0} Address: {1}")]
+    [Event(UltraSamplerParser.NativeModuleEvent, Level = EventLevel.Verbose, Message = "NativeModuleEvent {0} LoadAddress: {1}")]
     [SkipLocalsInit]
-    public unsafe void OnNativeModuleEvent(int evtKind, ulong evtLoadAddress, byte[]? evtPath, DateTime evtTimestampUtc)
+    public unsafe void OnNativeModuleEvent(NativeModuleEventKind nativeModuleEventKind, ulong loadAddress, byte[]? modulePathUtf8, long timestampUtc)
     {
-        if (IsEnabled())
+        Unsafe.SkipInit(out EventData4 evt);
+        evt.Data1.DataPointer = (nint)(void*)&nativeModuleEventKind;
+        evt.Data1.Size = sizeof(int);
+        evt.Data2.DataPointer = (nint)(void*)&loadAddress;
+        evt.Data2.Size = sizeof(ulong);
+        fixed (byte* evtPathPtr = modulePathUtf8)
         {
-            Unsafe.SkipInit(out EventData4 evt);
-            evt.Data1.DataPointer = (nint)(void*)&evtKind;
-            evt.Data1.Size = sizeof(int);
-            evt.Data2.DataPointer = (nint)(void*)&evtLoadAddress;
-            evt.Data2.Size = sizeof(ulong);
-            fixed (byte* evtPathPtr = evtPath)
-            {
-                evt.Data3.DataPointer = (nint)evtPathPtr;
-                evt.Data3.Size = evtPath?.Length ?? 0;
-                evt.Data4.DataPointer = (nint)(void*)&evtTimestampUtc;
-                evt.Data4.Size = sizeof(DateTime);
-                WriteEventCore(UltraSamplerParser.NativeModuleEvent, 4, &evt.Data1);
-            }
+            evt.Data3.DataPointer = (nint)evtPathPtr;
+            evt.Data3.Size = modulePathUtf8?.Length ?? 0;
+            evt.Data4.DataPointer = (nint)(void*)&timestampUtc;
+            evt.Data4.Size = sizeof(long);
+            WriteEventCore(UltraSamplerParser.NativeModuleEvent, 4, &evt.Data1);
         }
     }
 

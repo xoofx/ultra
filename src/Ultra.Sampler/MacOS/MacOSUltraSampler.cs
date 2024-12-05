@@ -5,7 +5,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
 using XenoAtom.Collections;
 
 namespace Ultra.Sampler.MacOS;
@@ -14,7 +13,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 {
     private bool _stopped;
     private Thread? _thread;
-    private bool _stackCaptureEnabled;
+    private bool _captureEnabled;
     private readonly AutoResetEvent _resumeCaptureThread;
 
     private const int MaximumFrames = 4096;
@@ -69,14 +68,14 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     protected override void EnableImpl()
     {
         _nextModuleEventIndexToLog = 0;
-        _stackCaptureEnabled = true;
+        _captureEnabled = true;
         _resumeCaptureThread.Set();
     }
 
     protected override void DisableImpl()
     {
         _nextModuleEventIndexToLog = 0;
-        _stackCaptureEnabled = false;
+        _captureEnabled = false;
     }
 
     private unsafe void RunImpl()
@@ -91,13 +90,13 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
             while (!_stopped)
             {
-                if (_stackCaptureEnabled)
+                if (_captureEnabled)
                 {
                     // Load all pending native module events before sampling
-                    LoadPendingNativeModuleEvents();
+                    NotifyPendingNativeModuleEvents();
 
                     // Sample the callstacks
-                    Sample(rootTask, currentThreadId, _frames, UltraSamplerSource.Log.Callstack);
+                    Sample(rootTask, currentThreadId, _frames, UltraSamplerSource.Log.OnNativeCallstack);
 
                     // Sleep for 1ms
                     Thread.Sleep(1);
@@ -156,7 +155,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         }
     }
 
-    private void LoadPendingNativeModuleEvents()
+    private void NotifyPendingNativeModuleEvents()
     {
         lock (_moduleEventLock)
         {
@@ -164,7 +163,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             for(; _nextModuleEventIndexToLog < events.Length; _nextModuleEventIndexToLog++)
             {
                 var evt = events[_nextModuleEventIndexToLog];
-                UltraSamplerSource.Log.OnNativeModuleEvent((int)evt.Kind, evt.LoadAddress, evt.Path, evt.TimestampUtc);
+                UltraSamplerSource.Log.OnNativeModuleEvent(evt.Kind, evt.LoadAddress, evt.Path, evt.TimestampUtc.Ticks);
             }
         }
     }
@@ -191,7 +190,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         return false;
     }
 
-    public void Sample(CallstackDelegate callstack)
+    public void Sample(NativeCallstackDelegate nativeCallstack)
     {
         MacOS.MacOSLibSystem.task_for_pid(MacOS.MacOSLibSystem.mach_task_self(), Process.GetCurrentProcess().Id, out var rootTask)
             .ThrowIfError("task_for_pid");
@@ -199,10 +198,10 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         MacOS.MacOSLibSystem.pthread_threadid_np(0, out var currentThreadId)
             .ThrowIfError("pthread_threadid_np");
 
-        Sample(rootTask, currentThreadId, _frames, callstack);
+        Sample(rootTask, currentThreadId, _frames, nativeCallstack);
     }
 
-    private static unsafe void Sample(MacOS.MacOSLibSystem.mach_port_t rootTask, ulong currentThreadId, Span<ulong> frames, CallstackDelegate callstack)
+    private static unsafe void Sample(MacOS.MacOSLibSystem.mach_port_t rootTask, ulong currentThreadId, Span<ulong> frames, NativeCallstackDelegate nativeCallstack)
     {
         // We support only ARM64 for the sampler
         if (RuntimeInformation.ProcessArchitecture != Architecture.Arm64) return;
@@ -251,8 +250,8 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                         .ThrowIfError("thread_get_state");
 
                     //Console.WriteLine($"sp: 0x{armThreadState.__sp:X8}, fp: 0x{armThreadState.__fp:X8}, lr: 0x{armThreadState.__lr:X8}");
-                    int frameCount = WalkCallStack(armThreadState.__sp, armThreadState.__fp, armThreadState.__lr, pFrames);
-                    callstack(threadInfo.thread_id, pFrames, frameCount);
+                    int frameCount = WalkNativeCallStack(armThreadState.__sp, armThreadState.__fp, armThreadState.__lr, pFrames);
+                    nativeCallstack(threadInfo.thread_id, pFrames, frameCount);
                 }
                 finally
                 {
@@ -267,7 +266,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         }
     }
 
-    private static unsafe int WalkCallStack(ulong sp, ulong fp, ulong lr, ulong* frames)
+    private static unsafe int WalkNativeCallStack(ulong sp, ulong fp, ulong lr, ulong* frames)
     {
         // The macOS ARM64 mandates that the frame pointer is always present
         int frameIndex = 0;
@@ -282,25 +281,3 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         return frameIndex;
     }
 }
-
-public struct NativeModuleEvent
-{
-    public NativeModuleEventKind Kind;
-    public ulong LoadAddress;
-    public byte[]? Path;
-    public DateTime TimestampUtc;
-
-    public override string ToString()
-    {
-        return $"{nameof(LoadAddress)}: 0x{LoadAddress:X8}, {nameof(Path)}: {Path}, {nameof(TimestampUtc)}: {TimestampUtc:O}";
-    }
-}
-
-public enum NativeModuleEventKind
-{
-    AlreadyLoaded,
-    Loaded,
-    Unloaded
-}
-
-public unsafe delegate void CallstackDelegate(ulong threadId, ulong* pFrames, int frameCount);
