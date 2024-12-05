@@ -4,7 +4,7 @@ using Ultra.Sampler.MacOS;
 
 namespace Ultra.Sampler;
 
-public abstract class UltraSampler
+internal abstract class UltraSampler
 {
     private static readonly object Lock = new();
 
