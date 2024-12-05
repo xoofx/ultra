@@ -12,4 +12,8 @@
     <InternalsVisibleTo Include="Ultra.Tests"/>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="XenoAtom.Collections" />
+  </ItemGroup>
+
 </Project>

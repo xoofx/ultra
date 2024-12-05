@@ -3,46 +3,19 @@
 // See license.txt file in the project root for full license information.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using static Ultra.Sampler.libSystem;
+using static Ultra.Sampler.MacOS.MacOSLibSystem;
 #pragma warning disable CS0649 // Field is never assigned to, and will always have its default value
 
-namespace Ultra.Sampler;
+namespace Ultra.Sampler.MacOS;
 
-using task_t = mach_port_t;
-using task_name_t = mach_port_t;
-using task_policy_set_t = mach_port_t;
-using task_policy_get_t = mach_port_t;
 using task_inspect_t = mach_port_t;
-using task_read_t = mach_port_t;
-using task_suspension_token_t = mach_port_t;
-using thread_t = mach_port_t;
 using thread_act_t = mach_port_t;
 using thread_inspect_t = mach_port_t;
-using thread_read_t = mach_port_t;
-using ipc_space_t = mach_port_t;
-using ipc_space_read_t = mach_port_t;
-using ipc_space_inspect_t = mach_port_t;
-using coalition_t = mach_port_t;
-using host_t = mach_port_t;
-using host_priv_t = mach_port_t;
-using host_security_t = mach_port_t;
-using processor_t = mach_port_t;
-using processor_set_t = mach_port_t;
-using processor_set_control_t = mach_port_t;
-using semaphore_t = mach_port_t;
-using lock_set_t = mach_port_t;
-using ledger_t = mach_port_t;
-using alarm_t = mach_port_t;
-using clock_serv_t = mach_port_t;
-using clock_ctrl_t = mach_port_t;
-using arcade_register_t = mach_port_t;
-using ipc_eventlink_t = mach_port_t;
-using suid_cred_t = mach_port_t;
-using task_id_token_t = mach_port_t;
 
 [SuppressMessage("ReSharper", "InconsistentNaming")]
-internal static partial class libSystem
+internal static partial class MacOSLibSystem
 {
     public const int EPERM = 1;
 
@@ -78,9 +51,15 @@ internal static partial class libSystem
 
     [LibraryImport(LibSystem)]
     public static unsafe partial return_t task_info(mach_port_t host, uint flavor, task_dyld_info* task_info, ref /*uint*/int task_info_count);
-    
+
     [LibraryImport(LibSystem)]
     public static unsafe partial return_t task_threads(task_inspect_t target_task, thread_act_t** act_list, out uint act_list_count);
+
+    [LibraryImport(LibSystem)]
+    public static unsafe partial return_t task_suspend(task_inspect_t target_task);
+
+    [LibraryImport(LibSystem)]
+    public static unsafe partial return_t task_resume(task_inspect_t target_task);
 
     [LibraryImport(LibSystem)]
     public static partial return_t thread_suspend(thread_act_t target_act);
@@ -93,10 +72,10 @@ internal static partial class libSystem
 
     [LibraryImport(LibSystem)]
     public static partial return_t thread_get_state(thread_inspect_t target_act, uint flavor, /*uint**/nint old_state, ref /*uint*/int old_state_count);
-    
+
     [LibraryImport(LibSystem)]
     public static partial nint pthread_from_mach_thread_np(thread_act_t target_act);
-    
+
     [LibraryImport(LibSystem)]
     public static partial return_t pthread_threadid_np(nint thread, out ulong threadId);
 
@@ -113,6 +92,18 @@ internal static partial class libSystem
         out int object_name);
 
     [LibraryImport(LibSystem)]
+    public static partial return_t mach_vm_remap(
+        int target_task,
+        ref /*UIntPtr*/ulong address,
+        /*UIntPtr*/ulong size,
+        /*UIntPtr*/ulong mask,
+        int flags,
+        int src_task,
+        /*UIntPtr*/ulong src_address,
+        int copy,
+        out /*UIntPtr*/ulong new_address);
+
+    [LibraryImport(LibSystem)]
     public static partial int mach_vm_deallocate(int target_task, /*UIntPtr*/ulong address, /*UIntPtr*/ulong size);
 
     [LibraryImport(LibSystem)]
@@ -120,6 +111,23 @@ internal static partial class libSystem
 
     [LibraryImport(LibSystem)]
     public static partial int waitpid(int pid, IntPtr status, int options);
+
+    public unsafe delegate void dyld_register_callback(mach_header* mh, nint vmaddr_slide);
+
+    [LibraryImport(LibSystem)]
+    public static partial void _dyld_register_func_for_add_image(nint callback);
+
+    [LibraryImport(LibSystem)]
+    public static partial void _dyld_register_func_for_remove_image(nint callback);
+
+    [LibraryImport(LibSystem)]
+    public static partial int dladdr(nint address, out dl_info info);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static nint mach_vm_trunk_page(nint addr) => addr & ~(Environment.SystemPageSize - 1);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static nint mach_vm_round_page(nint addr) => (addr + Environment.SystemPageSize - 1) & ~(Environment.SystemPageSize - 1);
 
     public unsafe struct dyld_all_image_infos
     {
@@ -179,7 +187,7 @@ internal static partial class libSystem
 
     public readonly unsafe struct task_dyld_info
     {
-        public readonly dyld_all_image_infos* all_image_info_addr;
+        public readonly nint all_image_info_addr;
         public readonly nint all_image_info_size;
         public readonly int all_image_info_format;
     }
@@ -278,4 +286,65 @@ internal static partial class libSystem
 
         public bool IsReadable => (Permission & PROT_READ) != 0;
     }
+
+    public const uint MH_MAGIC_64 = 0xfeedfacf;
+    public const uint MH_MAGIC = 0xfeedface;
+
+/*
+ * Structure filled in by dladdr().
+ */
+    public struct dl_info
+    {
+        public nint dli_fname; /* Pathname of shared object */
+        public nint dli_fbase; /* Base address of shared object */
+        public nint dli_sname; /* Name of nearest symbol */
+        public nint dli_saddr; /* Address of nearest symbol */
+    }
+
+    /*
+     * The 32-bit mach header appears at the very beginning of the object file for
+     * 32-bit architectures.
+     */
+    public struct mach_header {
+        public uint	magic;		/* mach magic number identifier */
+        public int		cputype;	/* cpu specifier */
+        public int		cpusubtype;	/* machine specifier */
+        public uint	filetype;	/* type of file */
+        public uint	ncmds;		/* number of load commands */
+        public uint	sizeofcmds;	/* the size of all the load commands */
+        public uint	flags;		/* flags */
+    };
+
+    /*
+     * The 64-bit mach header appears at the very beginning of object files for
+     * 64-bit architectures.
+     */
+    public struct mach_header_64 {
+        public uint	magic;		/* mach magic number identifier */
+        public int		cputype;	/* cpu specifier */
+        public int		cpusubtype;	/* machine specifier */
+        public uint	filetype;	/* type of file */
+        public uint	ncmds;		/* number of load commands */
+        public uint	sizeofcmds;	/* the size of all the load commands */
+        public uint	flags;		/* flags */
+        public uint	reserved;	/* reserved */
+    };
+
+    public struct load_command {
+        public uint cmd;		/* type of load command */
+        public uint cmdsize;	/* total size of command in bytes */
+    };
+
+    /*
+     * The uuid load command contains a single 128-bit unique random number that
+     * identifies an object produced by the static link editor.
+     */
+    public struct uuid_command {
+        public uint	cmd;		/* LC_UUID */
+        public uint	cmdsize;	/* sizeof(struct uuid_command) */
+        public Guid	uuid;	  /* the 128-bit uuid */
+    };
+
+    public const uint LC_UUID = 0x1b;
+
 }

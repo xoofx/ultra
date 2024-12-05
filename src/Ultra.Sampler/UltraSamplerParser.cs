@@ -12,5 +12,7 @@ public static class UltraSamplerParser
 
     public static readonly Guid Id = new(IdAsString);
 
-    public const int CallStackEvent = 1;
+    public const int NativeCallStackEvent = 1;
+
+    public const int NativeModuleEvent = 2;
 }
