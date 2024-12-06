@@ -7,8 +7,8 @@ using Ultra.Core;
 namespace Ultra.Tests;
 
 /// <summary>
-/// No tests for <see cref="EtwUltraProfiler"/> for now as it requires running as admin.
+/// No tests for <see cref="UltraProfiler"/> for now as it requires running as admin.
 /// </summary>
-public class EtwUltraProfilerTests : VerifyBase
+public class UltraProfilerTests : VerifyBase
 {
 }

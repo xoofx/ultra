@@ -7,7 +7,7 @@ namespace Ultra.Core;
 /// <summary>
 /// The mode of the console output.
 /// </summary>
-public enum EtwUltraProfilerConsoleMode
+public enum UltraProfilerConsoleMode
 {
     /// <summary>
     /// No console output from the program started.

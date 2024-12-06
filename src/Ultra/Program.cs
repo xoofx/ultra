@@ -22,7 +22,7 @@ internal class Program
         List<int> pidList = new();
 
         bool verbose = false;
-        var options = new EtwUltraProfilerOptions();
+        var options = new UltraProfilerOptions();
 
         const string _ = "";
 
@@ -53,15 +53,15 @@ internal class Program
                     {
                         if ("raw".Equals(v, StringComparison.OrdinalIgnoreCase))
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Raw;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Raw;
                         }
                         else if ("live".Equals(v, StringComparison.OrdinalIgnoreCase))
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Live;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Live;
                         }
                         else
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Silent;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Silent;
                         }
                     }
                 },
@@ -74,7 +74,7 @@ internal class Program
                         return 1;
                     }
 
-                    if (!EtwUltraProfiler.IsElevated())
+                    if (!UltraProfiler.IsElevated())
                     {
                         AnsiConsole.MarkupLine("[darkorange]This command requires to run with administrator rights[/]");
                         return 1;
@@ -100,7 +100,7 @@ internal class Program
 
                     options.EnsureDirectoryForBaseOutputFileName();
 
-                    var etwProfiler = EtwUltraProfiler.Create();
+                    var etwProfiler = UltraProfiler.Create();
 
                     Console.CancelKeyPress += (sender, eventArgs) =>
                     {
@@ -146,7 +146,7 @@ internal class Program
                         };
                     }
 
-                    if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Silent)
+                    if (options.ConsoleMode == UltraProfilerConsoleMode.Silent)
                     {
                         await AnsiConsole.Status()
                             .Spinner(Spinner.Known.Default)
@@ -194,7 +194,7 @@ internal class Program
                                 }
                             );
                     }
-                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Raw)
+                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Raw)
                     {
                         options.LogStepProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
                         options.LogProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
@@ -212,7 +212,7 @@ internal class Program
                             etwProfiler.Dispose();
                         }
                     }
-                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Live)
+                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Live)
                     {
                         var statusTable = new StatusTable();
 
@@ -356,7 +356,7 @@ internal class Program
                                     previousText = text;
                                 };
 
-                                var etwProfiler = EtwUltraProfiler.Create();
+                                var etwProfiler = UltraProfiler.Create();
                                 try
                                 {
                                     Console.CancelKeyPress += (sender, eventArgs) =>

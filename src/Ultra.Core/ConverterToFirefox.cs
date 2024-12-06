@@ -17,7 +17,7 @@ namespace Ultra.Core;
 /// <summary>
 /// Converts an ETW trace file to a Firefox profile.
 /// </summary>
-public sealed class EtwConverterToFirefox : IDisposable
+public sealed class ConverterToFirefox : IDisposable
 {
     private readonly Dictionary<ModuleFileIndex, int> _mapModuleFileIndexToFirefox;
     private readonly HashSet<ModuleFileIndex> _setManagedModules;
@@ -32,7 +32,7 @@ public sealed class EtwConverterToFirefox : IDisposable
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
     private int _profileThreadIndex;
-    private readonly EtwUltraProfilerOptions _options;
+    private readonly UltraProfilerOptions _options;
     private readonly FirefoxProfiler.Profile _profile;
 
     /// <summary>
@@ -70,7 +70,7 @@ public sealed class EtwConverterToFirefox : IDisposable
     /// </summary>
     public const int CategoryClr = 6;
 
-    private EtwConverterToFirefox(string traceFilePath, EtwUltraProfilerOptions options)
+    private ConverterToFirefox(string traceFilePath, UltraProfilerOptions options)
     {
         _etl = new ETWTraceEventSource(traceFilePath);
         _traceLog = TraceLog.OpenOrConvert(traceFilePath);
@@ -110,9 +110,9 @@ public sealed class EtwConverterToFirefox : IDisposable
     /// <param name="options">The options used for converting.</param>
     /// <param name="processIds">The list of process ids to extract from the ETL file.</param>
     /// <returns>The converted Firefox profile.</returns>
-    public static FirefoxProfiler.Profile Convert(string traceFilePath, EtwUltraProfilerOptions options, List<int> processIds)
+    public static FirefoxProfiler.Profile Convert(string traceFilePath, UltraProfilerOptions options, List<int> processIds)
     {
-        using var converter = new EtwConverterToFirefox(traceFilePath, options);
+        using var converter = new ConverterToFirefox(traceFilePath, options);
         return converter.Convert(processIds);
     }
 
