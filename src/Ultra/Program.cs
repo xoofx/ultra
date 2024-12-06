@@ -100,7 +100,7 @@ internal class Program
 
                     options.EnsureDirectoryForBaseOutputFileName();
 
-                    var etwProfiler = new EtwUltraProfiler();
+                    var etwProfiler = EtwUltraProfiler.Create();
 
                     Console.CancelKeyPress += (sender, eventArgs) =>
                     {
@@ -356,7 +356,7 @@ internal class Program
                                     previousText = text;
                                 };
 
-                                var etwProfiler = new EtwUltraProfiler();
+                                var etwProfiler = EtwUltraProfiler.Create();
                                 try
                                 {
                                     Console.CancelKeyPress += (sender, eventArgs) =>
