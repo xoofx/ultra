@@ -2,6 +2,8 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Text;
+
 namespace Ultra.Sampler.MacOS;
 
 internal struct NativeModuleEvent
@@ -13,6 +15,6 @@ internal struct NativeModuleEvent
 
     public override string ToString()
     {
-        return $"{nameof(LoadAddress)}: 0x{LoadAddress:X8}, {nameof(Path)}: {Path}, {nameof(TimestampUtc)}: {TimestampUtc:O}";
+        return $"{nameof(LoadAddress)}: 0x{LoadAddress:X8}, {nameof(Path)}: {Encoding.UTF8.GetString(Path ?? [])}, {nameof(TimestampUtc)}: {TimestampUtc:O}";
     }
 }
