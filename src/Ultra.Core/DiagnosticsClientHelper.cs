@@ -7,7 +7,7 @@ using Microsoft.Diagnostics.NETCore.Client;
 namespace Ultra.Core;
 
 // Waiting for the following PR to be merged:
-// - `DiagnosticsClientConnector`: https://github.com/dotnet/diagnostics/pull/5073 
+// - `DiagnosticsClientConnector`: https://github.com/dotnet/diagnostics/pull/5073
 // - `ApplyStartupHook`: https://github.com/dotnet/diagnostics/pull/5086
 internal static class DiagnosticsClientHelper
 {
@@ -16,19 +16,22 @@ internal static class DiagnosticsClientHelper
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "ApplyStartupHookAsync")]
     public static extern Task ApplyStartupHookAsync(this DiagnosticsClient client, string assemblyPath, CancellationToken token);
-    
+
     public static DiagnosticsClient Create(IpcEndpointBridge endPoint)
     {
-        return (DiagnosticsClient)typeof(DiagnosticsClient)
-            .GetConstructor(BindingFlags.NonPublic, [IpcEndpointBridge.IpcEndpointType!])!
-            .Invoke([endPoint.Instance]);
+        var ctor = typeof(DiagnosticsClient).GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance,
+            [IpcEndpointBridge.IpcEndpointType!])!;
+
+        var result = (DiagnosticsClient)ctor.Invoke([endPoint.Instance]);
+        return result;
     }
 
     public static DiagnosticsClient Create(IpcEndPointConfigBridge endPoint)
     {
-        return (DiagnosticsClient)typeof(DiagnosticsClient)
-            .GetConstructor(BindingFlags.NonPublic, [IpcEndPointConfigBridge.IpcEndpointConfigType!])!
-            .Invoke([endPoint.Instance]);
+        var ctor = typeof(DiagnosticsClient).GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance,
+            [IpcEndPointConfigBridge.IpcEndpointConfigType!])!;
+        var result = (DiagnosticsClient)ctor.Invoke([endPoint.Instance]);
+        return result;
     }
 }
 
@@ -148,8 +151,8 @@ struct ReversedDiagnosticsServerBridge
 {
     public static readonly Type? ReversedDiagnosticsServerType = typeof(DiagnosticsClient).Assembly.GetType("Microsoft.Diagnostics.NETCore.Client.ReversedDiagnosticsServer");
     private static readonly ConstructorInfo? ReversedDiagnosticsServerConstructor = ReversedDiagnosticsServerType?.GetConstructor([typeof(string)]);
-    private static readonly MethodInfo? ReversedDiagnosticsServerStartMethod = ReversedDiagnosticsServerType?.GetMethod("Start");
-    private static readonly MethodInfo? ReversedDiagnosticsServerAcceptAsyncMethod = ReversedDiagnosticsServerType?.GetMethod("AcceptAsync");
+    private static readonly MethodInfo? ReversedDiagnosticsServerStartMethod = ReversedDiagnosticsServerType?.GetMethod("Start", []);
+    private static readonly MethodInfo? ReversedDiagnosticsServerAcceptAsyncMethod = ReversedDiagnosticsServerType?.GetMethod("AcceptAsync", [typeof(CancellationToken)]);
     private static readonly MethodInfo? ReversedDiagnosticsServerDisposeAsyncMethod = ReversedDiagnosticsServerType?.GetMethod("DisposeAsync");
 
     public readonly object Instance;
@@ -173,8 +176,9 @@ struct ReversedDiagnosticsServerBridge
     }
     public async Task<IpcEndpointInfoBridge> AcceptAsync(CancellationToken ct)
     {
-        Task<object> task = (Task<object>)ReversedDiagnosticsServerAcceptAsyncMethod!.Invoke(Instance, [ct])!;
-        var result = await task;
+        Task task = (Task)ReversedDiagnosticsServerAcceptAsyncMethod!.Invoke(Instance, [ct])!;
+        await task;
+        var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
         return new IpcEndpointInfoBridge(result);
     }
 
