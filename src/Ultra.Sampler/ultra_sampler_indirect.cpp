@@ -9,7 +9,6 @@
 extern "C" {
     void ultra_sampler_start();
 
-
     void set_temporary_tmpdir(const char* sub_dir_name, void (*func)()) {
         // Get the current TMPDIR
         const char* original_tmpdir = getenv("TMPDIR");

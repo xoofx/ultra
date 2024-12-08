@@ -7,7 +7,6 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ByteSizeLib;
-using Microsoft.Diagnostics.Tracing.Session;
 
 namespace Ultra.Core;
 
@@ -87,14 +86,21 @@ public abstract class UltraProfiler : IDisposable
     }
 
     private protected abstract void DisposeImpl();
-    
+
     /// <summary>
     /// Determines whether the current process is running with elevated privileges.
     /// </summary>
     /// <returns>True if the current process is running with elevated privileges; otherwise, false.</returns>
     public static bool IsElevated()
     {
-        var isElevated = TraceEventSession.IsElevated();
+        if (OperatingSystem.IsMacOS()) return true;
+
+        return IsElevatedWindows();
+    }
+
+    private static bool IsElevatedWindows()
+    {
+        var isElevated = Microsoft.Diagnostics.Tracing.Session.TraceEventSession.IsElevated();
         return isElevated.HasValue && isElevated.Value;
     }
 
@@ -155,7 +161,7 @@ public abstract class UltraProfiler : IDisposable
         }
         else if (ultraProfilerOptions.ProgramPath != null)
         {
-            if (!ultraProfilerOptions.ProgramPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            if (OperatingSystem.IsWindows() && !ultraProfilerOptions.ProgramPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException($"Executable path {ultraProfilerOptions.ProgramPath} must end with .exe");
             }
@@ -300,11 +306,11 @@ public abstract class UltraProfiler : IDisposable
         }
 
         await runner.OnFinalCleanup();
-        
+
         return jsonFinalFile;
     }
 
-    
+
     private protected abstract ProfilerRunner CreateRunner(UltraProfilerOptions ultraProfilerOptions, List<Process> processList, string baseName, Process? singleProcess);
 
     /// <summary>
@@ -373,7 +379,7 @@ public abstract class UltraProfiler : IDisposable
         // Reset the clock to account for the duration of the profiler
         ProfilerClock.Restart();
     }
-    
+
     private protected async Task WaitForStaleFile(string file, UltraProfilerOptions options)
     {
         var clock = Stopwatch.StartNew();

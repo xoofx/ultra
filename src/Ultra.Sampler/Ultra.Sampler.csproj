@@ -21,4 +21,10 @@
     <PackageReference Include="XenoAtom.Collections" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Remove="libUltraSampler.dylib" />
+    
+    <None Remove="libUltraSamplerIndirect.dyld" />
+  </ItemGroup>
+
 </Project>

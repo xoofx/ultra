@@ -21,7 +21,7 @@ namespace Ultra.Core;
 internal sealed class UltraProfilerEventPipe : UltraProfiler
 {
     private static string PathToNativeUltraSampler => Path.Combine(AppContext.BaseDirectory, "libUltraSamplerIndirect.dyld");
-    
+
     /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
     /// </summary>
@@ -117,6 +117,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             value = ultraSamplerPath;
         }
 
+        Console.WriteLine($"DYLD_INSERT_LIBRARIES={value}");
         startInfo.Environment[key] = value;
     }
 
@@ -228,13 +229,13 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
             return totalLength;
         }
-        
+
         public async Task StartProfiling()
         {
             var ultraEventProvider = new EventPipeProvider(UltraSamplerParser.Name, EventLevel.Verbose);
             _ultraSession = await _ultraDiagnosticsClient.StartEventPipeSessionAsync([ultraEventProvider], true, 256, _token).ConfigureAwait(false);
             _ultraEventStreamCopyTask = _ultraSession.EventStream.CopyToAsync(_ultraNetTraceFileStream, _token);
-            
+
             if (_mainDiagnosticsClient is not null)
             {
                 var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
@@ -290,5 +291,5 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             }
         }
     }
-    
+
 }
