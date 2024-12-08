@@ -144,12 +144,12 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             _token = token;
             _ultraDiagnosticsClient = ultraDiagnosticsClient;
             _ultraNetTraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{baseName}_sampler_{pid}.nettrace");
-            _ultraNetTraceFileStream = new FileStream(_ultraNetTraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            _ultraNetTraceFileStream = new FileStream(_ultraNetTraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
             if (mainDiagnosticsClient != null)
             {
                 _mainDiagnosticsClient = mainDiagnosticsClient;
                 _mainNetTraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{baseName}_main_{pid}.nettrace");
-                _mainNetTraceFileStream = new FileStream(_mainNetTraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                _mainNetTraceFileStream = new FileStream(_mainNetTraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
             }
         }
 
@@ -191,18 +191,13 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             var diagnosticClientMain = new DiagnosticsClient(pid);
             var diagnosticClientUltra = await DiagnosticsClientConnector.FromDiagnosticPort(ultraDiagnosticPortSocket, token);
 
-            if (diagnosticClientUltra is null)
-            {
-
-            }
-
             var timeoutSource = new CancellationTokenSource();
             var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutSource.Token);
 
             try
             {
                 timeoutSource.CancelAfter(1000);
-                await diagnosticClientUltra.Instance.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
+                await diagnosticClientUltra!.Instance.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
                 await diagnosticClientMain.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
@@ -259,15 +254,6 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
         public async Task Stop()
         {
-            if (_ultraSession is not null)
-            {
-                await _ultraSession.StopAsync(_token).ConfigureAwait(false);
-            }
-            if (_mainSession is not null)
-            {
-                await _mainSession.StopAsync(_token).ConfigureAwait(false);
-            }
-
             if (_ultraEventStreamCopyTask is not null)
             {
                 await _ultraEventStreamCopyTask.ConfigureAwait(false);
@@ -276,6 +262,16 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             if (_mainEventStreamCopyTask is not null)
             {
                 await _mainEventStreamCopyTask.ConfigureAwait(false);
+            }
+
+            if (_ultraSession is not null)
+            {
+                await _ultraSession.StopAsync(_token).ConfigureAwait(false);
+            }
+
+            if (_mainSession is not null)
+            {
+                await _mainSession.StopAsync(_token).ConfigureAwait(false);
             }
         }
 
