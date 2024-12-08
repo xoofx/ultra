@@ -39,5 +39,6 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <ProjectReference Include="..\Ultra.ProcessHook\Ultra.ProcessHook.csproj" />
+    <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
   </ItemGroup>
 </Project>

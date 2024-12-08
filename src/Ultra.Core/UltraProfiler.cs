@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using ByteSizeLib;
 using Microsoft.Diagnostics.Tracing.Session;
@@ -20,6 +21,7 @@ public abstract class UltraProfiler : IDisposable
     private protected bool StopRequested;
     private protected readonly Stopwatch ProfilerClock;
     private protected TimeSpan LastTimeProgress;
+    private readonly CancellationTokenSource _cancellationTokenSource;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
@@ -27,7 +29,10 @@ public abstract class UltraProfiler : IDisposable
     protected UltraProfiler()
     {
         ProfilerClock = new Stopwatch();
+        _cancellationTokenSource = new CancellationTokenSource();
     }
+
+    protected CancellationToken CancellationToken => _cancellationTokenSource.Token;
 
     /// <summary>
     /// Creates a new instance of the <see cref="UltraProfiler"/> class.
@@ -41,7 +46,12 @@ public abstract class UltraProfiler : IDisposable
             return new UltraProfilerEtw();
         }
 
-        throw new PlatformNotSupportedException("Only Windows is supported");
+        if (OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            return new UltraProfilerEventPipe();
+        }
+
+        throw new PlatformNotSupportedException("Only Windows or macOS+ARM64 are supported");
     }
 
     /// <summary>
@@ -170,12 +180,12 @@ public abstract class UltraProfiler : IDisposable
         {
             await runner.OnStart();
             {
-                var startTheRequestedProgramIfRequired = () =>
+                var startTheRequestedProgramIfRequired = async () =>
                 {
                     // Start a command line process if needed
                     if (ultraProfilerOptions.ProgramPath is not null)
                     {
-                        var processState = StartProcess(ultraProfilerOptions);
+                        var processState = await StartProcess(runner, ultraProfilerOptions);
                         processList.Add(processState.Process);
                         // Append the pid for a single process that we are attaching to
                         if (singleProcess is null)
@@ -188,10 +198,11 @@ public abstract class UltraProfiler : IDisposable
                 };
 
                 // If we have a delay, or we are asked to start paused, we start the process before the profiling starts
-                bool hasExplicitProgramHasStarted = ultraProfilerOptions.DelayInSeconds != 0.0 || ultraProfilerOptions.Paused;
+                // On macOS we always need to start the program before enabling profiling
+                bool hasExplicitProgramHasStarted = ultraProfilerOptions.DelayInSeconds != 0.0 || ultraProfilerOptions.Paused || OperatingSystem.IsMacOS();
                 if (hasExplicitProgramHasStarted)
                 {
-                    startTheRequestedProgramIfRequired();
+                    await startTheRequestedProgramIfRequired();
                 }
 
                 // Wait for the process to start
@@ -213,7 +224,7 @@ public abstract class UltraProfiler : IDisposable
                 // If we haven't started the program yet, we start it now (for explicit program path)
                 if (!hasExplicitProgramHasStarted)
                 {
-                    startTheRequestedProgramIfRequired();
+                    await startTheRequestedProgramIfRequired();
                 }
 
                 foreach (var process in processList)
@@ -282,32 +293,17 @@ public abstract class UltraProfiler : IDisposable
 
         var fileToConvert = await runner.FinishFileToConvert();
 
-        var jsonFinalFile = await Convert(fileToConvert, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
+        string jsonFinalFile = string.Empty;
+        if (!string.IsNullOrEmpty(fileToConvert))
+        {
+            jsonFinalFile = await Convert(fileToConvert, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
+        }
 
         await runner.OnFinalCleanup();
         
         return jsonFinalFile;
     }
 
-
-    private protected class ProfilerRunner
-    {
-        public required Func<Task> OnStart;
-
-        public required Func<Task> OnEnablingProfiling;
-
-        public required Func<long> OnProfiling;
-
-        public required Func<Task> OnStop;
-
-        public required Func<Task> OnCatch;
-
-        public required Func<Task> OnFinally;
-
-        public required Func<Task<string>> FinishFileToConvert;
-
-        public required Func<Task> OnFinalCleanup;
-    }
     
     private protected abstract ProfilerRunner CreateRunner(UltraProfilerOptions ultraProfilerOptions, List<Process> processList, string baseName, Process? singleProcess);
 
@@ -415,7 +411,7 @@ public abstract class UltraProfiler : IDisposable
         }
     }
 
-    private protected static ProcessState StartProcess(UltraProfilerOptions ultraProfilerOptions)
+    private protected static async Task<ProcessState> StartProcess(ProfilerRunner runner, UltraProfilerOptions ultraProfilerOptions)
     {
         var mode = ultraProfilerOptions.ConsoleMode;
 
@@ -436,6 +432,11 @@ public abstract class UltraProfiler : IDisposable
             startInfo.UseShellExecute = true;
             startInfo.CreateNoWindow = true;
             startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+
+            if (runner.OnPrepareStartProcess != null)
+            {
+                await runner.OnPrepareStartProcess(startInfo);
+            }
 
             process.Start();
         }
@@ -462,6 +463,11 @@ public abstract class UltraProfiler : IDisposable
                     ultraProfilerOptions.ProgramLogStderr?.Invoke(args.Data);
                 }
             };
+
+            if (runner.OnPrepareStartProcess != null)
+            {
+                await runner.OnPrepareStartProcess(startInfo);
+            }
 
             process.Start();
 
@@ -490,6 +496,11 @@ public abstract class UltraProfiler : IDisposable
         };
         thread.Start();
 
+        if (runner.OnProcessStarted != null)
+        {
+            await runner.OnProcessStarted(process);
+        }
+
         return state;
     }
 
@@ -501,6 +512,31 @@ public abstract class UltraProfiler : IDisposable
             CleanCancel.Dispose();
             CleanCancel = null;
         }
+    }
+
+    private protected class ProfilerRunner(string baseFileName)
+    {
+        public string BaseFileName { get; } = baseFileName;
+
+        public required Func<Task> OnStart;
+
+        public required Func<Task> OnEnablingProfiling;
+
+        public required Func<long> OnProfiling;
+
+        public required Func<Task> OnStop;
+
+        public Func<ProcessStartInfo, Task>? OnPrepareStartProcess;
+
+        public Func<Process, Task>? OnProcessStarted;
+
+        public required Func<Task> OnCatch;
+
+        public required Func<Task> OnFinally;
+
+        public required Func<Task<string>> FinishFileToConvert;
+
+        public required Func<Task> OnFinalCleanup;
     }
 
     private protected class ProcessState

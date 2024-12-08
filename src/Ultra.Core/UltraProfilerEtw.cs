@@ -46,7 +46,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
         string? etlFinalFile = null;
 
-        var runner = new ProfilerRunner()
+        var runner = new ProfilerRunner(baseName)
         {
             OnStart = () =>
             {

@@ -11,11 +11,28 @@ namespace Ultra.Core;
 // - `ApplyStartupHook`: https://github.com/dotnet/diagnostics/pull/5086
 internal static class DiagnosticsClientHelper
 {
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "ApplyStartupHook")]
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = nameof(ApplyStartupHook))]
     public static extern void ApplyStartupHook(this DiagnosticsClient client, string assemblyPath);
 
-    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "ApplyStartupHookAsync")]
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = nameof(ApplyStartupHookAsync))]
     public static extern Task ApplyStartupHookAsync(this DiagnosticsClient client, string assemblyPath, CancellationToken token);
+
+    /// <summary>
+    /// Wait for an available diagnostic endpoint to the runtime instance.
+    /// </summary>
+    /// <param name="timeout">The amount of time to wait before cancelling the wait for the connection.</param>
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = nameof(WaitForConnection))]
+    public static extern void WaitForConnection(this DiagnosticsClient client, TimeSpan timeout);
+
+    /// <summary>
+    /// Wait for an available diagnostic endpoint to the runtime instance.
+    /// </summary>
+    /// <param name="token">The token to monitor for cancellation requests.</param>
+    /// <returns>
+    /// A task the completes when a diagnostic endpoint to the runtime instance becomes available.
+    /// </returns>
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = nameof(WaitForConnectionAsync))]
+    public static extern Task WaitForConnectionAsync(this DiagnosticsClient client, CancellationToken token);
 
     public static DiagnosticsClient Create(IpcEndpointBridge endPoint)
     {
