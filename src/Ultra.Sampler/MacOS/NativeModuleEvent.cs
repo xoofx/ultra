@@ -10,11 +10,12 @@ internal struct NativeModuleEvent
 {
     public NativeModuleEventKind Kind;
     public ulong LoadAddress;
+    public ulong Size;
     public byte[]? Path;
     public DateTime TimestampUtc;
 
     public override string ToString()
     {
-        return $"{nameof(LoadAddress)}: 0x{LoadAddress:X8}, {nameof(Path)}: {Encoding.UTF8.GetString(Path ?? [])}, {nameof(TimestampUtc)}: {TimestampUtc:O}";
+        return $"{nameof(LoadAddress)}: 0x{LoadAddress:X8}, {nameof(Size)}: {Size}, {nameof(Path)}: {Encoding.UTF8.GetString(Path ?? [])}, {nameof(TimestampUtc)}: {TimestampUtc:O}";
     }
 }

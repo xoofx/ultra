@@ -343,8 +343,38 @@ internal static partial class MacOSLibSystem
         public uint	cmd;		/* LC_UUID */
         public uint	cmdsize;	/* sizeof(struct uuid_command) */
         public Guid	uuid;	  /* the 128-bit uuid */
-    };
+    }
+
+    public unsafe struct segment_command_64 { /* for 64-bit architectures */
+        public uint	cmd;		/* LC_SEGMENT_64 */
+        public uint	cmdsize;	/* includes sizeof section_64 structs */
+        public fixed byte segname[16];	/* segment name */
+        public ulong	vmaddr;		/* memory address of this segment */
+        public ulong	vmsize;		/* memory size of this segment */
+        public ulong	fileoff;	/* file offset of this segment */
+        public ulong	filesize;	/* amount to map from the file */
+        public int		maxprot;	/* maximum VM protection */
+        public int		initprot;	/* initial VM protection */
+        public uint	nsects;		/* number of sections in segment */
+        public uint	flags;		/* flags */
+    }
+
+    public unsafe struct section_64 { /* for 64-bit architectures */
+        public fixed byte		sectname[16];	/* name of this section */
+        public fixed byte		segname[16];	/* segment this section goes in */
+        public ulong	addr;		/* memory address of this section */
+        public ulong	size;		/* size in bytes of this section */
+        public uint	offset;		/* file offset of this section */
+        public uint	align;		/* section alignment (power of 2) */
+        public uint	reloff;		/* file offset of relocation entries */
+        public uint	nreloc;		/* number of relocation entries */
+        public uint	flags;		/* flags (section type and attributes)*/
+        public uint	reserved1;	/* reserved (for offset or index) */
+        public uint	reserved2;	/* reserved (for count or sizeof) */
+        public uint	reserved3;	/* reserved */
+    }
 
     public const uint LC_UUID = 0x1b;
+    public const uint LC_SEGMENT_64 = 0x19;
 
 }

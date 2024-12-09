@@ -5,6 +5,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.IO.Enumeration;
+using System.Net.Sockets;
 using ByteSizeLib;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing;
@@ -117,7 +118,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             value = ultraSamplerPath;
         }
 
-        Console.WriteLine($"DYLD_INSERT_LIBRARIES={value}");
+        //Console.WriteLine($"DYLD_INSERT_LIBRARIES={value}");
         startInfo.Environment[key] = value;
     }
 
@@ -156,6 +157,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         public static async Task<UltraSamplerProfilerState> Connect(string baseName, int pid, CancellationToken token, UltraProfilerOptions options)
         {
 
+            //var ultraTempFolder = Path.Combine(Path.GetTempPath(), ".ultra");
             var ultraTempFolder = Path.Combine(Path.GetTempPath(), ".ultra");
 
             var pattern = $"dotnet-diagnostic-{pid}-*";
@@ -189,7 +191,8 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             }
 
             var diagnosticClientMain = new DiagnosticsClient(pid);
-            var diagnosticClientUltra = await DiagnosticsClientConnector.FromDiagnosticPort(ultraDiagnosticPortSocket, token);
+            //DiagnosticsClient? diagnosticClientMain = null;
+            var diagnosticClientUltra = (await DiagnosticsClientConnector.FromDiagnosticPort(ultraDiagnosticPortSocket, token).ConfigureAwait(false))!.Instance;
 
             var timeoutSource = new CancellationTokenSource();
             var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutSource.Token);
@@ -197,7 +200,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             try
             {
                 timeoutSource.CancelAfter(1000);
-                await diagnosticClientUltra!.Instance.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
+                await diagnosticClientUltra!.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
                 await diagnosticClientMain.WaitForConnectionAsync(linkedCancellationTokenSource.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
@@ -209,7 +212,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
                 throw;
             }
 
-            return new UltraSamplerProfilerState(options, diagnosticClientMain, diagnosticClientUltra.Instance, baseName, pid, token);
+            return new UltraSamplerProfilerState(options, diagnosticClientMain, diagnosticClientUltra, baseName, pid, token);
         }
 
         public long TotalFileLength()
@@ -228,7 +231,8 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         public async Task StartProfiling()
         {
             var ultraEventProvider = new EventPipeProvider(UltraSamplerParser.Name, EventLevel.Verbose);
-            _ultraSession = await _ultraDiagnosticsClient.StartEventPipeSessionAsync([ultraEventProvider], true, 256, _token).ConfigureAwait(false);
+            var config = new EventPipeSessionConfiguration([ultraEventProvider], 256, false, true);
+            _ultraSession = await _ultraDiagnosticsClient.StartEventPipeSessionAsync(config, _token).ConfigureAwait(false);
             _ultraEventStreamCopyTask = _ultraSession.EventStream.CopyToAsync(_ultraNetTraceFileStream, _token);
 
             if (_mainDiagnosticsClient is not null)
@@ -264,14 +268,44 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
                 await _mainEventStreamCopyTask.ConfigureAwait(false);
             }
 
-            if (_ultraSession is not null)
-            {
-                await _ultraSession.StopAsync(_token).ConfigureAwait(false);
-            }
+            await SafeStopAsync(_ultraSession, _token);
+            _ultraSession = null;
 
-            if (_mainSession is not null)
+            await SafeStopAsync(_mainSession, _token);
+            _mainSession = null;
+        }
+
+        private static async Task SafeStopAsync(EventPipeSession? session, CancellationToken token)
+        {
+            if (session is null) return;
+
+            try
             {
-                await _mainSession.StopAsync(_token).ConfigureAwait(false);
+                await session.StopAsync(token).ConfigureAwait(false);
+            }
+            catch (EndOfStreamException)
+            {
+
+            }
+            catch (TimeoutException)
+            {
+
+            }
+            catch (OperationCanceledException)
+            {
+
+            }
+            catch (PlatformNotSupportedException)
+            {
+
+            }
+            catch (ServerNotAvailableException)
+            {
+
+            }
+            catch (SocketException)
+            {
+
             }
         }
 

@@ -2,7 +2,9 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Collections;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XenoAtom.Collections;
@@ -24,6 +26,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private bool _initializingModules;
     private readonly object _moduleEventLock = new();
     private int _nextModuleEventIndexToLog;
+    private readonly UltraSamplerSource _samplerEventSource;
 
     private readonly MacOSLibSystem.dyld_register_callback _callbackDyldAdded;
     private readonly MacOSLibSystem.dyld_register_callback _callbackDyldRemoved;
@@ -40,6 +43,9 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         MacOSLibSystem._dyld_register_func_for_add_image(Marshal.GetFunctionPointerForDelegate(_callbackDyldAdded));
         _initializingModules = false;
         MacOSLibSystem._dyld_register_func_for_remove_image(Marshal.GetFunctionPointerForDelegate(_callbackDyldRemoved));
+
+        // Make sure to use the instance to trigger the constructor of the EventSource so that it is registered in the runtime!
+        _samplerEventSource = UltraSamplerSource.Log;
     }
 
     protected override void StartImpl()
@@ -140,6 +146,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         var path = MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)info.dli_fname);
         evt.Path = path.ToArray();
         evt.TimestampUtc = DateTime.UtcNow;
+        evt.Size = GetMaximumCodeAddress(loadAddress);
 
         lock (_moduleEventLock)
         {
@@ -163,7 +170,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             for(; _nextModuleEventIndexToLog < events.Length; _nextModuleEventIndexToLog++)
             {
                 var evt = events[_nextModuleEventIndexToLog];
-                UltraSamplerSource.Log.OnNativeModuleEvent(evt.Kind, evt.LoadAddress, evt.Path, evt.TimestampUtc.Ticks);
+                UltraSamplerSource.Log.OnNativeModuleEvent(evt.Kind, evt.LoadAddress, evt.Size, evt.Path, evt.TimestampUtc.Ticks);
             }
         }
     }
@@ -188,6 +195,41 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         }
 
         return false;
+    }
+
+    private static ulong GetMaximumCodeAddress(nint headerPtr)
+    {
+        ulong startAddress = 0;
+
+        ulong size = 0;
+        var header = (MacOSLibSystem.mach_header_64*)headerPtr;
+        if (header->magic != MacOSLibSystem.MH_MAGIC_64) throw new InvalidOperationException("Invalid magic header");
+
+        var nbCommands = header->ncmds;
+        var commands = (MacOSLibSystem.load_command*)((byte*)header + sizeof(MacOSLibSystem.mach_header_64));
+        for(uint i = 0; i < nbCommands; i++)
+        {
+            ref var command = ref commands[i];
+            if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
+            {
+                ref var segment = ref Unsafe.As<MacOSLibSystem.load_command,MacOSLibSystem.segment_command_64>(ref command);
+                if (segment.vmaddr != 0)
+                {
+                    if (startAddress == 0)
+                    {
+                        startAddress = segment.vmaddr;
+                    }
+
+                    var newSize = (ulong)((long)segment.vmaddr + (long)segment.vmsize - (long)startAddress);
+                    if (newSize > size)
+                    {
+                        size = newSize;
+                    }
+                }
+            }
+        }
+
+        return size;
     }
 
     public void Sample(NativeCallstackDelegate nativeCallstack)
@@ -251,7 +293,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
                     //Console.WriteLine($"sp: 0x{armThreadState.__sp:X8}, fp: 0x{armThreadState.__fp:X8}, lr: 0x{armThreadState.__lr:X8}");
                     int frameCount = WalkNativeCallStack(armThreadState.__sp, armThreadState.__fp, armThreadState.__lr, pFrames);
-                    nativeCallstack(threadInfo.thread_id, pFrames, frameCount);
+                    nativeCallstack(threadInfo.thread_id, (nint)pFrames, frameCount);
                 }
                 finally
                 {

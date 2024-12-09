@@ -27,10 +27,4 @@ public static class UltraSamplerParser
     public const int NativeCallStackEvent = 1;
 
     public const int NativeModuleEvent = 2;
-
-
-    public static void TestId(Guid guid)
-    {
-        guid = Id;
-    }
 }

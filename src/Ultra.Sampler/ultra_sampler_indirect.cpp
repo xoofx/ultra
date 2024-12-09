@@ -45,7 +45,7 @@ extern "C" {
         free(new_tmpdir);
 
         pid_t pid = getpid();
-        printf("Current Process pid: %d tmpdir: %s\n", pid, getenv("TMPDIR"));
+        //printf("Current Process pid: %d tmpdir: %s\n", pid, getenv("TMPDIR"));
 
         // Call the arbitrary function
         func();
