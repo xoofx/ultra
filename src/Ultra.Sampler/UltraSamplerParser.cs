@@ -4,7 +4,7 @@
 
 namespace Ultra.Sampler;
 
-public static class UltraSamplerParser
+internal static class UltraSamplerParser
 {
     public const string Name = "Ultra-Sampler";
 

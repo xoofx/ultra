@@ -27,6 +27,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\Ultra.Sampler\UltraSamplerParser.cs" Link="UltraSamplerParser.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../../img/ultra.png" Pack="true" PackagePath="/" />
     <None Include="readme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
@@ -38,8 +42,6 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <ProjectReference Include="..\Ultra.ProcessHook\Ultra.ProcessHook.csproj" />
-    <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
   </ItemGroup>
 
   <ItemGroup>
