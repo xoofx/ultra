@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using ByteSizeLib;
 using Microsoft.Diagnostics.Tracing;
@@ -392,12 +393,20 @@ public class EtwUltraProfiler : IDisposable
 
         var directory = Path.GetDirectoryName(etlFile);
         var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
-        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
+        var baseFileName = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}";
+        var jsonFinalFile = $"{baseFileName}.json.gz";
         ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
         await using var stream = File.Create(jsonFinalFile);
         await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
         await JsonSerializer.SerializeAsync(gzipStream, profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
         gzipStream.Flush();
+
+        // Write the markdown report
+        {
+            using var mdStream = File.Create($"{baseFileName}_report.md");
+            using var writer = new StreamWriter(mdStream, Encoding.UTF8);
+            MarkdownReportGenerator.Generate(profile, writer);
+        }
 
         return jsonFinalFile;
     }

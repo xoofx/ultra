@@ -23,7 +23,25 @@ public class JitCompileEvent : FirefoxProfiler.MarkerPayload
     {
         Type = TypeId;
         FullName = string.Empty;
+        MethodNamespace = string.Empty;
+        MethodName = string.Empty;
+        MethodSignature = string.Empty;
     }
+
+    /// <summary>
+    /// Gets or sets the namespace of the method. (Not serialized to JSON)
+    /// </summary>
+    public string MethodNamespace { get; set; }
+
+    /// <summary>
+    /// Gets or sets the name of the method. (Not serialized to JSON)
+    /// </summary>
+    public string MethodName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the signature of the method. (Not serialized to JSON)
+    /// </summary>
+    public string MethodSignature { get; set; }
 
     /// <summary>
     /// Gets or sets the full name of the method.

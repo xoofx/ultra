@@ -281,6 +281,9 @@ public sealed class EtwConverterToFirefox : IDisposable
 
                             var jitCompile = new JitCompileEvent
                             {
+                                MethodNamespace = methodJittingStarted.MethodNamespace,
+                                MethodName = methodJittingStarted.MethodName,
+                                MethodSignature = signature,
                                 FullName =
                                     $"{methodJittingStarted.MethodNamespace}.{methodJittingStarted.MethodName}{signature}",
                                 MethodILSize = methodJittingStarted.MethodILSize
