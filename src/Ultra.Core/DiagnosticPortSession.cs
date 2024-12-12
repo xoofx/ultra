@@ -20,7 +20,7 @@ internal class DiagnosticPortSession
     private readonly bool _sampler;
     private readonly string _baseName;
     private readonly Task _connectTask;
-    private readonly object _sessionLock = new();
+    private readonly SemaphoreSlim _semaphoreSlim;
     private Task? _profilingTask;
     private readonly CancellationTokenSource _cancelConnectSource;
     private DiagnosticsClient? _diagnosticsClient;
@@ -36,6 +36,7 @@ internal class DiagnosticPortSession
         _sampler = sampler;
         _baseName = baseName;
         _cancelConnectSource = new CancellationTokenSource();
+        _semaphoreSlim = new SemaphoreSlim(0);
         _connectTask = ConnectAndStartProfilingImpl(pid, sampler, baseName, token);
     }
 
@@ -74,10 +75,11 @@ internal class DiagnosticPortSession
         }
     }
 
-    public void StartProfiling(CancellationToken token)
+    public async Task StartProfiling(CancellationToken token)
     {
         // We want to make sure that we are not disposing while we are connecting
-        Monitor.Enter(_sessionLock);
+        await _semaphoreSlim.WaitAsync(token);
+
         try
         {
             if (_disposed)
@@ -87,6 +89,7 @@ internal class DiagnosticPortSession
 
             _profilingTask = _connectTask.ContinueWith(async task =>
             {
+
 
                 _nettraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{_baseName}_{(_sampler ? "sampler" : "main")}_{_pid}.nettrace");
                 _nettraceFileStream = new FileStream(_nettraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
@@ -121,7 +124,7 @@ internal class DiagnosticPortSession
         }
         finally
         {
-            Monitor.Exit(_sessionLock);
+            _semaphoreSlim.Release();
         }
     }
 
@@ -171,7 +174,9 @@ internal class DiagnosticPortSession
 
     public async ValueTask StopAndDisposeAsync()
     {
-        Monitor.Enter(_sessionLock);
+        // We want to make sure that we are not disposing while we are connecting
+        await _semaphoreSlim.WaitAsync(CancellationToken.None);
+
         try
         {
             if (_profilingTask is null)
@@ -236,7 +241,7 @@ internal class DiagnosticPortSession
         finally
         {
             _disposed = true;
-            Monitor.Exit(_sessionLock);
+            _semaphoreSlim.Release();
 
             _cancelConnectSource.Dispose();
         }
