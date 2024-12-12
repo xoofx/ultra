@@ -23,8 +23,7 @@
 
   <ItemGroup>
     <None Remove="libUltraSampler.dylib" />
-    
-    <None Remove="libUltraSamplerIndirect.dyld" />
+    <None Remove="libUltraSamplerHook.dylib" />
   </ItemGroup>
 
 </Project>

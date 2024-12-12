@@ -49,8 +49,8 @@
       <Link>libUltraSampler.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\Ultra.Sampler\libUltraSamplerIndirect.dyld">
-      <Link>libUltraSamplerIndirect.dyld</Link>
+    <Content Include="..\Ultra.Sampler\libUltraSamplerHook.dylib">
+      <Link>libUltraSamplerHook.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
