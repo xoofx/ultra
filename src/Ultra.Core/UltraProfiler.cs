@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using ByteSizeLib;
 
 namespace Ultra.Core;
@@ -21,17 +22,18 @@ public abstract class UltraProfiler : IDisposable
     private protected readonly Stopwatch ProfilerClock;
     private protected TimeSpan LastTimeProgress;
     private readonly CancellationTokenSource _cancellationTokenSource;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
     /// </summary>
-    protected UltraProfiler()
+    private protected UltraProfiler()
     {
         ProfilerClock = new Stopwatch();
         _cancellationTokenSource = new CancellationTokenSource();
     }
 
-    protected CancellationToken CancellationToken => _cancellationTokenSource.Token;
+    private protected CancellationToken CancellationToken => _cancellationTokenSource.Token;
 
     /// <summary>
     /// Creates a new instance of the <see cref="UltraProfiler"/> class.
@@ -69,6 +71,9 @@ public abstract class UltraProfiler : IDisposable
         {
             StopRequested = true;
 
+            // Make sure that we cancel any pending operations
+            _cancellationTokenSource.Cancel();
+
             // Before really canceling, wait for the clean cancel to be done
             WaitForCleanCancel();
             return true;
@@ -80,7 +85,11 @@ public abstract class UltraProfiler : IDisposable
     /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         DisposeImpl();
+        _cancellationTokenSource.Dispose();
         CleanCancel?.Dispose();
         CleanCancel = null;
     }

@@ -77,7 +77,7 @@ internal class DiagnosticPortSession
 
     public async Task StartProfiling(CancellationToken token)
     {
-        // We want to make sure that we are not disposing while we are connecting
+        // We want to make sure that we are not disposing while we are starting a session
         await _semaphoreSlim.WaitAsync(token);
 
         try
@@ -143,6 +143,9 @@ internal class DiagnosticPortSession
         var pattern = $"dotnet-diagnostic-{pid}-*-socket";
         string? diagnosticPortSocket = null;
 
+        int waitForNextCheckDelayInMs = 10;
+
+        // This loop is blocking until a file is available or the token is cancelled
         while (true)
         {
             if (Directory.Exists(tempFolder))
@@ -166,7 +169,11 @@ internal class DiagnosticPortSession
                 }
             }
 
-            await Task.Delay(10, token).ConfigureAwait(false);
+            await Task.Delay(waitForNextCheckDelayInMs, token).ConfigureAwait(false);
+
+            // Let's increase the delay after each check to lower the overhead
+            waitForNextCheckDelayInMs += 10;
+            waitForNextCheckDelayInMs = Math.Max(waitForNextCheckDelayInMs, 100);
         }
 
         return diagnosticPortSocket;
@@ -244,40 +251,6 @@ internal class DiagnosticPortSession
             _semaphoreSlim.Release();
 
             _cancelConnectSource.Dispose();
-        }
-    }
-
-    private async Task StopAsync(CancellationToken token)
-    {
-        if (_eventPipeSession is null) return;
-
-        try
-        {
-            await _eventPipeSession.StopAsync(token).ConfigureAwait(false);
-        }
-        catch (EndOfStreamException)
-        {
-
-        }
-        catch (TimeoutException)
-        {
-
-        }
-        catch (OperationCanceledException)
-        {
-
-        }
-        catch (PlatformNotSupportedException)
-        {
-
-        }
-        catch (ServerNotAvailableException)
-        {
-
-        }
-        catch (SocketException)
-        {
-
         }
     }
 }
