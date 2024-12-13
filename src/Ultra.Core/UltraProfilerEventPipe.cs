@@ -11,7 +11,7 @@ namespace Ultra.Core;
 /// </summary>
 internal sealed class UltraProfilerEventPipe : UltraProfiler
 {
-    private static string PathToNativeUltraSampler => Path.Combine(AppContext.BaseDirectory, "libUltraSamplerHook.dyld");
+    private static string PathToNativeUltraSampler => Path.Combine(AppContext.BaseDirectory, "libUltraSamplerHook.dylib");
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
@@ -97,11 +97,13 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
     private class UltraSamplerProfilerState
     {
+        private readonly CancellationToken _token;
         private readonly DiagnosticPortSession _samplerSession;
         private readonly DiagnosticPortSession _clrSession;
-        
+
         public UltraSamplerProfilerState(string baseName, int pid, CancellationToken token)
         {
+            _token = token;
             _samplerSession = new(pid, true, baseName, token);
             _clrSession = new(pid, false, baseName, token);
         }
@@ -129,8 +131,11 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         public async Task StartProfiling()
         {
             await _samplerSession.WaitForConnectAndStartSession();
+
+            await _samplerSession.StartProfiling(_token);
+            await _clrSession.StartProfiling(_token);
         }
-        
+
         public async ValueTask StopAndDisposeAsync()
         {
             await _samplerSession.StopAndDisposeAsync().ConfigureAwait(false);
