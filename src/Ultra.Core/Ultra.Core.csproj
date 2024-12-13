@@ -44,7 +44,7 @@
     </PackageReference>
   </ItemGroup>
 
-  <ItemGroup>
+  <!--<ItemGroup>
     <Content Include="..\Ultra.Sampler\libUltraSampler.dylib">
       <Link>libUltraSampler.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -53,5 +53,5 @@
       <Link>libUltraSamplerHook.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-  </ItemGroup>
+  </ItemGroup>-->
 </Project>

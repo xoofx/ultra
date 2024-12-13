@@ -25,6 +25,16 @@ public abstract class UltraProfiler : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// The postfix name for the sampler events for a nettrace file.
+    /// </summary>
+    public const string NettracePostfixNameSampler = "_sampler";
+
+    /// <summary>
+    /// The postfix name for the CLR events for a nettrace file.
+    /// </summary>
+    public const string NettracePostfixNameClr = "_clr";
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
     /// </summary>
     private protected UltraProfiler()
@@ -306,12 +316,12 @@ public abstract class UltraProfiler : IDisposable
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        var fileToConvert = await runner.FinishFileToConvert();
+        var traceFiles = await runner.FinishFileToConvert();
 
         string jsonFinalFile = string.Empty;
-        if (!string.IsNullOrEmpty(fileToConvert))
+        if (traceFiles.Count > 9)
         {
-            jsonFinalFile = await Convert(fileToConvert, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
+            jsonFinalFile = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
         }
 
         await runner.OnFinalCleanup();
@@ -325,23 +335,22 @@ public abstract class UltraProfiler : IDisposable
     /// <summary>
     /// Converts the ETL file to a compressed JSON file in the Firefox Profiler format.
     /// </summary>
-    /// <param name="etlFile">The path to the ETL file.</param>
+    /// <param name="baseFileNameOutput">The base name of the output file.</param>
+    /// <param name="traceFiles">The list of trace files to include in the conversion.</param>
     /// <param name="pIds">The list of process IDs to include in the conversion.</param>
     /// <param name="ultraProfilerOptions">The options for the profiler.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
     /// <exception cref="InvalidOperationException">Thrown when a stop request is received.</exception>
-    public async Task<string> Convert(string etlFile, List<int> pIds, UltraProfilerOptions ultraProfilerOptions)
+    public async Task<string> Convert(string baseFileNameOutput, List<UltraProfilerTraceFile> traceFiles, List<int> pIds, UltraProfilerOptions ultraProfilerOptions)
     {
-        var profile = ConverterToFirefox.Convert(etlFile, ultraProfilerOptions, pIds);
+        var profile = UltraConverterToFirefox.Convert(traceFiles, ultraProfilerOptions, pIds);
 
         if (StopRequested)
         {
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        var directory = Path.GetDirectoryName(etlFile);
-        var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
-        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
+        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseFileNameOutput}.json.gz";
         ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
         await using var stream = File.Create(jsonFinalFile);
         await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
@@ -549,7 +558,7 @@ public abstract class UltraProfiler : IDisposable
 
         public required Func<Task> OnFinally;
 
-        public required Func<Task<string>> FinishFileToConvert;
+        public required Func<Task<List<UltraProfilerTraceFile>>> FinishFileToConvert;
 
         public required Func<Task> OnFinalCleanup;
     }

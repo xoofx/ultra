@@ -159,7 +159,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                     File.Delete(rundownSession);
                 }
 
-                return etlFinalFile;
+                return [new(etlFinalFile)];
             },
 
             OnFinalCleanup = () =>

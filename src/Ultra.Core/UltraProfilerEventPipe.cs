@@ -58,15 +58,9 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
             OnFinally = () => Task.CompletedTask,
 
-            FinishFileToConvert = () =>
-            {
-                return Task.FromResult(string.Empty);
-            },
+            FinishFileToConvert = () => Task.FromResult(profilerState?.GetGeneratedTraceFiles() ?? []),
 
-            OnFinalCleanup = () =>
-            {
-                return Task.CompletedTask;
-            },
+            OnFinalCleanup = () => Task.CompletedTask,
 
             OnEnablingProfiling = async () =>
             {
@@ -110,6 +104,21 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         {
             _samplerSession = new(pid, true, baseName, token);
             _clrSession = new(pid, false, baseName, token);
+        }
+
+        public List<UltraProfilerTraceFile> GetGeneratedTraceFiles()
+        {
+            var files = new List<UltraProfilerTraceFile>();
+            if (_samplerSession.TryGetNettraceFilePathIfExists(out var nettraceFilePath))
+            {
+                files.Add(new UltraProfilerTraceFile(nettraceFilePath));
+            }
+
+            if (_clrSession.TryGetNettraceFilePathIfExists(out nettraceFilePath))
+            {
+                files.Add(new UltraProfilerTraceFile(nettraceFilePath));
+            }
+            return files;
         }
 
         public long TotalFileLength()

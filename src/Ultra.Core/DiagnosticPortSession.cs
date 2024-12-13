@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
 using System.Net.Sockets;
 using Microsoft.Diagnostics.NETCore.Client;
@@ -29,7 +30,7 @@ internal class DiagnosticPortSession
     private FileStream? _nettraceFileStream;
     private Task? _eventStreamCopyTask;
     private bool _disposed;
-    
+
     public DiagnosticPortSession(int pid, bool sampler, string baseName, CancellationToken token)
     {
         _pid = pid;
@@ -38,6 +39,18 @@ internal class DiagnosticPortSession
         _cancelConnectSource = new CancellationTokenSource();
         _semaphoreSlim = new SemaphoreSlim(0);
         _connectTask = ConnectAndStartProfilingImpl(pid, sampler, baseName, token);
+    }
+
+    public bool TryGetNettraceFilePathIfExists([NotNullWhen(true)] out string? nettraceFilePath)
+    {
+        if (_nettraceFilePath is null || !File.Exists(_nettraceFilePath))
+        {
+            nettraceFilePath = null;
+            return false;
+        }
+
+        nettraceFilePath = _nettraceFilePath;
+        return nettraceFilePath is not null;
     }
 
     private async Task ConnectAndStartProfilingImpl(int pid, bool sampler, string baseName, CancellationToken token)
@@ -91,7 +104,7 @@ internal class DiagnosticPortSession
             {
 
 
-                _nettraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{_baseName}_{(_sampler ? "sampler" : "main")}_{_pid}.nettrace");
+                _nettraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{_baseName}_{(_sampler ? "sampler" : "clr")}_{_pid}.nettrace");
                 _nettraceFileStream = new FileStream(_nettraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
 
                 long keywords = -1;
@@ -100,7 +113,7 @@ internal class DiagnosticPortSession
 
                 if (!_sampler)
                 {
-                    providerName = "Microsoft-Windows-DotNETRuntime";
+                    providerName = ClrTraceEventParser.ProviderName;
                     keywords = (long)(
                         ClrTraceEventParser.Keywords.JITSymbols |
                         ClrTraceEventParser.Keywords.Exception |

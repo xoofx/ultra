@@ -17,7 +17,7 @@ namespace Ultra.Core;
 /// <summary>
 /// Converts an ETW trace file to a Firefox profile.
 /// </summary>
-public sealed class ConverterToFirefox : IDisposable
+internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 {
     private readonly Dictionary<ModuleFileIndex, int> _mapModuleFileIndexToFirefox;
     private readonly HashSet<ModuleFileIndex> _setManagedModules;
@@ -32,48 +32,13 @@ public sealed class ConverterToFirefox : IDisposable
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
     private int _profileThreadIndex;
-    private readonly UltraProfilerOptions _options;
-    private readonly FirefoxProfiler.Profile _profile;
-
-    /// <summary>
-    /// A generic other category.
-    /// </summary>
-    public const int CategoryOther = 0;
-
-    /// <summary>
-    /// The kernel category.
-    /// </summary>
-    public const int CategoryKernel = 1;
-
-    /// <summary>
-    /// The native category.
-    /// </summary>
-    public const int CategoryNative = 2;
-
-    /// <summary>
-    /// The managed category.
-    /// </summary>
-    public const int CategoryManaged = 3;
-
-    /// <summary>
-    /// The GC category.
-    /// </summary>
-    public const int CategoryGc = 4;
-
-    /// <summary>
-    /// The JIT category.
-    /// </summary>
-    public const int CategoryJit = 5;
-
-    /// <summary>
-    /// The CLR category.
-    /// </summary>
-    public const int CategoryClr = 6;
-
-    private ConverterToFirefox(string traceFilePath, UltraProfilerOptions options)
+    
+    public UltraConverterToFirefoxEtw(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options) : base(traceFiles, options)
     {
-        _etl = new ETWTraceEventSource(traceFilePath);
-        _traceLog = TraceLog.OpenOrConvert(traceFilePath);
+        _etl = new ETWTraceEventSource(traceFiles[0].FileName);
+        _traceLog = TraceLog.OpenOrConvert(traceFiles[0].FileName);
+
+        ProfilerResult = CreateProfile();
 
         var symbolPath = options.GetCachedSymbolPath();
         var symbolPathText = symbolPath.ToString();
@@ -81,10 +46,6 @@ public sealed class ConverterToFirefox : IDisposable
         _symbolReader = new SymbolReader(TextWriter.Null, symbolPathText);
         _symbolReader.Options = SymbolReaderOptions.None;
         _symbolReader.SecurityCheck = (pdbPath) => true;
-
-        this._profile = CreateProfile();
-        
-        this._options = options;
 
         _mapModuleFileIndexToFirefox = new();
         _mapCallStackIndexToFirefox = new();
@@ -96,34 +57,15 @@ public sealed class ConverterToFirefox : IDisposable
     }
 
     /// <inheritdoc />
-    public void Dispose()
+    public override void Dispose()
     {
         _symbolReader.Dispose();
         _traceLog.Dispose();
         _etl.Dispose();
     }
 
-    /// <summary>
-    /// Converts an ETW trace file to a Firefox profile.
-    /// </summary>
-    /// <param name="traceFilePath">The ETW trace file to convert.</param>
-    /// <param name="options">The options used for converting.</param>
-    /// <param name="processIds">The list of process ids to extract from the ETL file.</param>
-    /// <returns>The converted Firefox profile.</returns>
-    public static FirefoxProfiler.Profile Convert(string traceFilePath, UltraProfilerOptions options, List<int> processIds)
+    private protected override void ConvertImpl(List<int> processIds)
     {
-        using var converter = new ConverterToFirefox(traceFilePath, options);
-        return converter.Convert(processIds);
-    }
-
-    private FirefoxProfiler.Profile Convert(List<int> processIds)
-    {
-        // MSNT_SystemTrace/Image/KernelBase - ThreadID="-1" ProcessorNumber="9" ImageBase="0xfffff80074000000" 
-        
-        // We don't have access to physical CPUs
-        //profile.Meta.PhysicalCPUs = Environment.ProcessorCount / 2;
-        //profile.Meta.CPUName = ""; // TBD
-
         _profileThreadIndex = 0;
 
         foreach (var processId in processIds)
@@ -132,8 +74,6 @@ public sealed class ConverterToFirefox : IDisposable
 
             ConvertProcess(process);
         }
-
-        return _profile;
     }
 
     /// <summary>
@@ -142,31 +82,31 @@ public sealed class ConverterToFirefox : IDisposable
     /// <param name="process">The process to convert.</param>
     private void ConvertProcess(TraceProcess process)
     {
-        if (_profile.Meta.Product == string.Empty)
+        if (ProfilerResult.Meta.Product == string.Empty)
         {
-            _profile.Meta.Product = process.Name;
+            ProfilerResult.Meta.Product = process.Name;
         }
 
         var processStartTime = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
         var processEndTime = new DateTimeOffset(process.EndTime.ToUniversalTime()).ToUnixTimeMilliseconds();
-        if (processStartTime < _profile.Meta.StartTime)
+        if (processStartTime < ProfilerResult.Meta.StartTime)
         {
-            _profile.Meta.StartTime = processStartTime;
+            ProfilerResult.Meta.StartTime = processStartTime;
         }
-        if (processEndTime > _profile.Meta.EndTime)
+        if (processEndTime > ProfilerResult.Meta.EndTime)
         {
-            _profile.Meta.EndTime = processEndTime;
+            ProfilerResult.Meta.EndTime = processEndTime;
         }
 
         var profilingStartTime = process.StartTimeRelativeMsec;
-        if (profilingStartTime < _profile.Meta.ProfilingStartTime)
+        if (profilingStartTime < ProfilerResult.Meta.ProfilingStartTime)
         {
-            _profile.Meta.ProfilingStartTime = profilingStartTime;
+            ProfilerResult.Meta.ProfilingStartTime = profilingStartTime;
         }
         var profilingEndTime = process.EndTimeRelativeMsec;
-        if (profilingEndTime > _profile.Meta.ProfilingEndTime)
+        if (profilingEndTime > ProfilerResult.Meta.ProfilingEndTime)
         {
-            _profile.Meta.ProfilingEndTime = profilingEndTime;
+            ProfilerResult.Meta.ProfilingEndTime = profilingEndTime;
         }
 
         LoadModules(process);
@@ -225,7 +165,7 @@ public sealed class ConverterToFirefox : IDisposable
                 ShowMarkersInTimeline = true
             };
 
-            _options.LogProgress?.Invoke($"Converting Events for Thread: {profileThread.Name}");
+            Options.LogProgress?.Invoke($"Converting Events for Thread: {profileThread.Name}");
 
             var samples = profileThread.Samples;
             var markers = profileThread.Markers;
@@ -475,12 +415,12 @@ public sealed class ConverterToFirefox : IDisposable
                 startTime = evt.TimeStampRelativeMSec;
             }
 
-            _profile.Threads.Add(profileThread);
+            ProfilerResult.Threads.Add(profileThread);
 
             // Make visible threads in the UI that consume a minimum amount of CPU time
-            if (thread.CPUMSec > _options.MinimumCpuTimeBeforeThreadIsVisibleInMs)
+            if (thread.CPUMSec > Options.MinimumCpuTimeBeforeThreadIsVisibleInMs)
             {
-                _profile.Meta.InitialVisibleThreads!.Add(_profileThreadIndex);
+                ProfilerResult.Meta.InitialVisibleThreads!.Add(_profileThreadIndex);
             }
 
             // We will select by default the thread that has the maximum activity
@@ -511,8 +451,8 @@ public sealed class ConverterToFirefox : IDisposable
             //gcHeapStatsCounter.Samples.Number = new();
             gcHeapStatsCounter.Samples.Time = new();
 
-            _profile.Counters ??= new();
-            _profile.Counters.Add(gcHeapStatsCounter);
+            ProfilerResult.Counters ??= new();
+            ProfilerResult.Counters.Add(gcHeapStatsCounter);
 
             long previousTotalHeapSize = 0;
 
@@ -538,12 +478,12 @@ public sealed class ConverterToFirefox : IDisposable
         if (threads.Count > 0)
         {
             // Always make at least the first thread visible (that is taking most of the CPU time)
-            if (!_profile.Meta.InitialVisibleThreads!.Contains(threadIndexWithMaxCpuTime))
+            if (!ProfilerResult.Meta.InitialVisibleThreads!.Contains(threadIndexWithMaxCpuTime))
             {
-                _profile.Meta.InitialVisibleThreads.Add(threadIndexWithMaxCpuTime);
+                ProfilerResult.Meta.InitialVisibleThreads.Add(threadIndexWithMaxCpuTime);
             }
 
-            _profile.Meta.InitialSelectedThreads!.Add(threadIndexWithMaxCpuTime);
+            ProfilerResult.Meta.InitialSelectedThreads!.Add(threadIndexWithMaxCpuTime);
         }
     }
 
@@ -553,7 +493,7 @@ public sealed class ConverterToFirefox : IDisposable
     /// <param name="process">The process to load the modules.</param>
     private void LoadModules(TraceProcess process)
     {
-        _options.LogProgress?.Invoke($"Loading Modules for process {process.Name} ({process.ProcessID})");
+        Options.LogProgress?.Invoke($"Loading Modules for process {process.Name} ({process.ProcessID})");
 
         _setManagedModules.Clear();
         _clrJitModuleIndex = ModuleFileIndex.Invalid;
@@ -565,7 +505,7 @@ public sealed class ConverterToFirefox : IDisposable
             var module = allModules[i];
             if (!_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
             {
-                _options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
+                Options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
 
                 var lib = new FirefoxProfiler.Lib
                 {
@@ -581,8 +521,8 @@ public sealed class ConverterToFirefox : IDisposable
 
                 _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
 
-                _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, _profile.Libs.Count);
-                _profile.Libs.Add(lib);
+                _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, ProfilerResult.Libs.Count);
+                ProfilerResult.Libs.Add(lib);
             }
 
             var fileName = Path.GetFileName(module.FilePath);
