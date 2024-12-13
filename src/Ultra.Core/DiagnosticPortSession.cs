@@ -5,7 +5,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
-using System.Net.Sockets;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing.Parsers;
 using Ultra.Sampler;
@@ -37,8 +36,8 @@ internal class DiagnosticPortSession
         _sampler = sampler;
         _baseName = baseName;
         _cancelConnectSource = new CancellationTokenSource();
-        _semaphoreSlim = new SemaphoreSlim(0);
-        _connectTask = ConnectAndStartProfilingImpl(pid, sampler, baseName, token);
+        _semaphoreSlim = new SemaphoreSlim(1);
+        _connectTask = ConnectAndStartProfilingImpl(token);
     }
 
     public bool TryGetNettraceFilePathIfExists([NotNullWhen(true)] out string? nettraceFilePath)
@@ -53,20 +52,20 @@ internal class DiagnosticPortSession
         return nettraceFilePath is not null;
     }
 
-    private async Task ConnectAndStartProfilingImpl(int pid, bool sampler, string baseName, CancellationToken token)
+    private async Task ConnectAndStartProfilingImpl(CancellationToken token)
     {
         CancellationTokenSource linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token, _cancelConnectSource.Token);
         try
         {
-            
+
             var connectCancellationToken = linkedCancellationTokenSource.Token;
 
-            if (sampler)
+            if (_sampler)
             {
                 _cancelConnectSource.CancelAfter(500);
             }
 
-            var connectionAddress = await TryFindConnectionAddress(pid, sampler, connectCancellationToken).ConfigureAwait(false);
+            var connectionAddress = await TryFindConnectionAddress(_pid, _sampler, connectCancellationToken).ConfigureAwait(false);
             if (connectionAddress is null) return;
 
             _diagnosticsClient = (await DiagnosticsClientConnector.FromDiagnosticPort(connectionAddress, connectCancellationToken).ConfigureAwait(false))?.Instance;
@@ -76,9 +75,9 @@ internal class DiagnosticPortSession
         }
         catch (OperationCanceledException ex)
         {
-            if (sampler && _cancelConnectSource is not null && _cancelConnectSource.IsCancellationRequested)
+            if (_sampler && _cancelConnectSource is not null && _cancelConnectSource.IsCancellationRequested)
             {
-                throw new InvalidOperationException($"Cannot connect to the diagnostic port socket for pid {pid}", ex);
+                throw new InvalidOperationException($"Cannot connect to the diagnostic port socket for pid {_pid}", ex);
             }
             return;
         }
@@ -91,7 +90,9 @@ internal class DiagnosticPortSession
     public async Task StartProfiling(CancellationToken token)
     {
         // We want to make sure that we are not disposing while we are starting a session
+        Console.WriteLine($"Before entering Start/Lock for {(_sampler?"sampler":"clr")}");
         await _semaphoreSlim.WaitAsync(token);
+        Console.WriteLine($"After entering Start/Lock for {(_sampler?"sampler":"clr")}");
 
         try
         {
@@ -102,9 +103,12 @@ internal class DiagnosticPortSession
 
             _profilingTask = _connectTask.ContinueWith(async task =>
             {
+                if (task.IsFaulted)
+                {
+                    return;
+                }
 
-
-                _nettraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{_baseName}_{(_sampler ? "sampler" : "clr")}_{_pid}.nettrace");
+                _nettraceFilePath = Path.Combine(Environment.CurrentDirectory, $"{_baseName}_{_pid}_{(_sampler ? "sampler" : "clr")}.nettrace");
                 _nettraceFileStream = new FileStream(_nettraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
 
                 long keywords = -1;
@@ -143,11 +147,11 @@ internal class DiagnosticPortSession
 
     public long GetNettraceFileLength() => _nettraceFileStream?.Length ?? 0;
 
-    public async Task WaitForConnectAndStartSession()
+    public async Task WaitForConnect()
     {
         await _connectTask.ConfigureAwait(false);
     }
-    
+
     private static async Task<string?> TryFindConnectionAddress(int pid, bool sampler, CancellationToken token)
     {
         var tempFolder = Path.GetTempPath();
@@ -186,7 +190,7 @@ internal class DiagnosticPortSession
 
             // Let's increase the delay after each check to lower the overhead
             waitForNextCheckDelayInMs += 10;
-            waitForNextCheckDelayInMs = Math.Max(waitForNextCheckDelayInMs, 100);
+            waitForNextCheckDelayInMs = Math.Min(waitForNextCheckDelayInMs, 100);
         }
 
         return diagnosticPortSocket;
@@ -194,7 +198,8 @@ internal class DiagnosticPortSession
 
     public async ValueTask StopAndDisposeAsync()
     {
-        // We want to make sure that we are not disposing while we are connecting
+        // We want to make sure that we are not disposing while we are connecting/trying to start a session
+        // (This could happen if we are trying to profile a non .NET process with the CLR provider)
         await _semaphoreSlim.WaitAsync(CancellationToken.None);
 
         try
@@ -208,53 +213,56 @@ internal class DiagnosticPortSession
             {
                 try
                 {
+                    await _connectTask.ConfigureAwait(false);
+
                     // We wait for the session to start (we will close it right after below
                     await _profilingTask.ConfigureAwait(false);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Console.WriteLine($"Error while waiting for profiling {_baseName} {(_sampler?"sampler":"clr")} to finish: {ex}");
                     // Ignore
                 }
-            }
 
-            Debug.Assert(_eventStreamCopyTask is not null);
-            try
-            {
-                await _eventStreamCopyTask.ConfigureAwait(false);
-            }
-            catch
-            {
-                // Ignore
-            }
-
-            Debug.Assert(_nettraceFileStream is not null);
-            try
-            {
-                await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Ignore
-            }
-
-            Debug.Assert(_eventPipeSession is not null);
-            try
-            {
-                await _eventPipeSession.StopAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Ignore
-            }
-            finally
-            {
+                Debug.Assert(_eventStreamCopyTask is not null);
                 try
                 {
-                    _eventPipeSession.Dispose();
+                    await _eventStreamCopyTask.ConfigureAwait(false);
                 }
                 catch
                 {
                     // Ignore
+                }
+
+                Debug.Assert(_nettraceFileStream is not null);
+                try
+                {
+                    await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Ignore
+                }
+
+                Debug.Assert(_eventPipeSession is not null);
+                try
+                {
+                    await _eventPipeSession.StopAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Ignore
+                }
+                finally
+                {
+                    try
+                    {
+                        _eventPipeSession.Dispose();
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
                 }
             }
         }

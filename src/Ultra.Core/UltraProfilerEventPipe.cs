@@ -130,7 +130,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
         public async Task StartProfiling()
         {
-            await _samplerSession.WaitForConnectAndStartSession();
+            await _samplerSession.WaitForConnect();
 
             await _samplerSession.StartProfiling(_token);
             await _clrSession.StartProfiling(_token);
