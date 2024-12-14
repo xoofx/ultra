@@ -4,8 +4,6 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
-using System.Runtime.CompilerServices;
-using Ultra.Sampler.MacOS;
 
 namespace Ultra.Sampler;
 
@@ -20,19 +18,21 @@ internal sealed class UltraSamplerSource : EventSource
 
     [Event(UltraSamplerParser.NativeCallStackEvent, Level = EventLevel.Informational)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void OnNativeCallstack(ulong threadId, nint pFrames, int count)
+    public unsafe void OnNativeCallstack(ulong threadId, ulong pFrames, int count)
     {
-        EventData2 evt = default;
+        EventData3 evt = default;
         evt.Data1.DataPointer = (nint)(void*)&threadId;
         evt.Data1.Size = sizeof(ulong);
         evt.Data2.DataPointer = (nint)pFrames;
         evt.Data2.Size = count * sizeof(ulong);
-        WriteEventCore(UltraSamplerParser.NativeCallStackEvent, 2, &evt.Data1);
+        evt.Data3.DataPointer = (int) &count;
+        evt.Data3.Size = sizeof(int);
+        WriteEventCore(UltraSamplerParser.NativeCallStackEvent, 3, &evt.Data1);
     }
 
     [Event(UltraSamplerParser.NativeModuleEvent, Level = EventLevel.Informational)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void OnNativeModuleEvent(NativeModuleEventKind nativeModuleEventKind, ulong loadAddress, ulong size, byte[]? modulePathUtf8, long timestampUtc)
+    public unsafe void OnNativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, byte[]? modulePathUtf8, DateTime timestampUtc)
     {
         EventData5 evt = default;
         evt.Data1.DataPointer = (nint)(void*)&nativeModuleEventKind;
@@ -45,9 +45,10 @@ internal sealed class UltraSamplerSource : EventSource
         {
             evt.Data4.DataPointer = (nint)evtPathPtr;
             evt.Data4.Size = modulePathUtf8?.Length ?? 0;
-            evt.Data5.DataPointer = (nint)(void*)&timestampUtc;
+            var utcFileTime = timestampUtc.ToFileTimeUtc();
+            evt.Data5.DataPointer = (nint)(void*)&utcFileTime;
             evt.Data5.Size = sizeof(long);
-            WriteEventCore(UltraSamplerParser.NativeModuleEvent, 4, &evt.Data1);
+            WriteEventCore(UltraSamplerParser.NativeModuleEvent, 5, &evt.Data1);
         }
     }
 
@@ -67,11 +68,13 @@ internal sealed class UltraSamplerSource : EventSource
         }
     }
 
-    private struct EventData2
+    private struct EventData3
     {
         public EventData Data1;
 
         public EventData Data2;
+
+        public EventData Data3;
     }
 
     private struct EventData5
