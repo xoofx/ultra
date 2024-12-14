@@ -112,7 +112,7 @@ internal class DiagnosticPortSession
                 _nettraceFileStream = new FileStream(_nettraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
 
                 long keywords = -1;
-                var providerName = UltraSamplerParser.Name;
+                var providerName = UltraSamplerConstants.Name;
                 var level = EventLevel.Verbose;
 
                 if (!_sampler)

@@ -27,7 +27,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Ultra.Sampler\UltraSamplerParser.cs" Link="UltraSamplerParser.cs" />
+    <Compile Include="..\Ultra.Sampler\UltraSamplerConstants.cs" Link="UltraSamplerConstants.cs" />
   </ItemGroup>
 
   <ItemGroup>
