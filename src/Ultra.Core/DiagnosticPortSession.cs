@@ -90,9 +90,7 @@ internal class DiagnosticPortSession
     public async Task StartProfiling(CancellationToken token)
     {
         // We want to make sure that we are not disposing while we are starting a session
-        Console.WriteLine($"Before entering Start/Lock for {(_sampler?"sampler":"clr")}");
         await _semaphoreSlim.WaitAsync(token);
-        Console.WriteLine($"After entering Start/Lock for {(_sampler?"sampler":"clr")}");
 
         try
         {
@@ -218,9 +216,8 @@ internal class DiagnosticPortSession
                     // We wait for the session to start (we will close it right after below
                     await _profilingTask.ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Console.WriteLine($"Error while waiting for profiling {_baseName} {(_sampler?"sampler":"clr")} to finish: {ex}");
                     // Ignore
                 }
 
