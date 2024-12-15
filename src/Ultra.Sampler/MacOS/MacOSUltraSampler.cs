@@ -293,7 +293,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
                     //Console.WriteLine($"sp: 0x{armThreadState.__sp:X8}, fp: 0x{armThreadState.__fp:X8}, lr: 0x{armThreadState.__lr:X8}");
                     int frameCount = WalkNativeCallStack(armThreadState.__sp, armThreadState.__fp, armThreadState.__lr, pFrames);
-                    nativeCallstack(threadInfo.thread_id, frameCount, (ulong)pFrames);
+                    nativeCallstack(threadInfo.thread_id, frameCount, (byte*)pFrames);
                 }
                 finally
                 {

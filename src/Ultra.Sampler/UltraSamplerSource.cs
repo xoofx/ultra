@@ -20,14 +20,14 @@ internal sealed class UltraSamplerSource : EventSource
 
     [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void OnNativeCallstack(ulong threadId, int frameCount, ulong frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
+    public unsafe void OnNativeCallstack(ulong threadId, int frameCount, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
     {
         var evt = stackalloc EventData[3];
         evt[0].DataPointer = (nint)(void*)&threadId;
         evt[0].Size = sizeof(ulong);
-        evt[1].DataPointer = (int) &frameCount;
+        evt[1].DataPointer = (nint)(void*)&frameCount;
         evt[1].Size = sizeof(int);
-        evt[2].DataPointer = (nint)frames;
+        evt[2].DataPointer = (nint)(void*)&frames;
         evt[2].Size = frameCount * sizeof(ulong);
         WriteEventCore(UltraSamplerConstants.NativeCallStackEventId, 3, evt);
     }
@@ -56,8 +56,13 @@ internal sealed class UltraSamplerSource : EventSource
                 evt[5].DataPointer = (nint)evtPathPtr;
                 evt[5].Size = modulePathUtf8Length;
             }
-            
-            WriteEventCore(UltraSamplerConstants.NativeModuleEventId, modulePathUtf8Length > 0 ? 6 : 5, evt);
+            else
+            {
+                evt[5].DataPointer = (nint)(void*)&loadAddress;
+                evt[5].Size = 0;
+            }
+
+            WriteEventCore(UltraSamplerConstants.NativeModuleEventId, 6, evt);
         }
     }
 
