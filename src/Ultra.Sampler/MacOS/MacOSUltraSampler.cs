@@ -146,7 +146,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         var path = MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)info.dli_fname);
         evt.Path = path.ToArray();
         evt.TimestampUtc = DateTime.UtcNow;
-        evt.Size = GetMaximumCodeAddress(loadAddress);
+        evt.Size = GetDyldCodeSize(loadAddress);
 
         lock (_moduleEventLock)
         {
@@ -197,9 +197,9 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         return false;
     }
 
-    private static ulong GetMaximumCodeAddress(nint headerPtr)
+    private static ulong GetDyldCodeSize(nint headerPtr)
     {
-        ulong startAddress = 0;
+        ulong startAddress = ulong.MaxValue;
 
         ulong size = 0;
         var header = (MacOSLibSystem.mach_header_64*)headerPtr;
@@ -213,22 +213,30 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
             {
                 ref var segment = ref Unsafe.As<MacOSLibSystem.load_command,MacOSLibSystem.segment_command_64>(ref command);
-                if (segment.vmaddr != 0)
+                if (segment.vmaddr < startAddress)
                 {
-                    if (startAddress == 0)
-                    {
-                        startAddress = segment.vmaddr;
-                    }
-
-                    var newSize = (ulong)((long)segment.vmaddr + (long)segment.vmsize - (long)startAddress);
-                    if (newSize > size)
-                    {
-                        size = newSize;
-                    }
+                    startAddress = segment.vmaddr;
                 }
             }
         }
 
+        if (startAddress == ulong.MaxValue) return 0;
+
+        for (uint i = 0; i < nbCommands; i++)
+        {
+            ref var command = ref commands[i];
+            if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
+            {
+                ref var segment = ref Unsafe.As<MacOSLibSystem.load_command, MacOSLibSystem.segment_command_64>(ref command);
+
+                var newSize = (ulong)((long)segment.vmaddr + (long)segment.vmsize - (long)startAddress);
+                if (newSize > size)
+                {
+                    size = newSize;
+                }
+            }
+        }
+        
         return size;
     }
 
