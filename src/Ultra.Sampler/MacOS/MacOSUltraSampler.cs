@@ -236,7 +236,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
             {
                 ref var segment = ref Unsafe.As<MacOSLibSystem.load_command,MacOSLibSystem.segment_command_64>(ref command);
-                if (segment.vmaddr < startAddress)
+                if ((segment.initprot & MacOSLibSystem.PROT_EXEC) != 0  && segment.vmaddr < startAddress)
                 {
                     startAddress = segment.vmaddr;
                 }
@@ -253,7 +253,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 ref var segment = ref Unsafe.As<MacOSLibSystem.load_command, MacOSLibSystem.segment_command_64>(ref command);
 
                 var newSize = (ulong)((long)segment.vmaddr + (long)segment.vmsize - (long)startAddress);
-                if (newSize > size)
+                if ((segment.initprot & MacOSLibSystem.PROT_EXEC) != 0 && newSize > size)
                 {
                     size = newSize;
                 }

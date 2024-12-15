@@ -22,6 +22,8 @@ internal static partial class MacOSLibSystem
     public const int KERN_INVALID_ADDRESS = 1;
 
     public const int PROT_READ = 0x01;
+    public const int PROT_WRITE = 0x02;
+    public const int PROT_EXEC = 0x04;
 
     public const int PT_ATTACH = 10; // TODO: deprecated
     public const int PT_DETACH = 11;
