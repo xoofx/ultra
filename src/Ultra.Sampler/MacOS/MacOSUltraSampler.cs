@@ -102,7 +102,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     NotifyPendingNativeModuleEvents();
 
                     // Sample the callstacks
-                    Sample(rootTask, currentThreadId, _frames, UltraSamplerSource.Log.OnNativeCallstack);
+                    Sample(rootTask, currentThreadId, _frames, UltraSamplerSource.Log.NativeCallstack);
 
                     // Sleep for 1ms
                     Thread.Sleep(1);
@@ -170,7 +170,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             for(; _nextModuleEventIndexToLog < events.Length; _nextModuleEventIndexToLog++)
             {
                 var evt = events[_nextModuleEventIndexToLog];
-                UltraSamplerSource.Log.OnNativeModuleEvent((int)evt.Kind, evt.LoadAddress, evt.Size, evt.TimestampUtc, evt.Path?.Length ?? 0, evt.Path);
+                UltraSamplerSource.Log.NativeModuleEvent((int)evt.Kind, evt.LoadAddress, evt.Size, evt.TimestampUtc, evt.Path);
             }
         }
     }
@@ -293,7 +293,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
                     //Console.WriteLine($"sp: 0x{armThreadState.__sp:X8}, fp: 0x{armThreadState.__fp:X8}, lr: 0x{armThreadState.__lr:X8}");
                     int frameCount = WalkNativeCallStack(armThreadState.__sp, armThreadState.__fp, armThreadState.__lr, pFrames);
-                    nativeCallstack(threadInfo.thread_id, frameCount, (byte*)pFrames);
+                    nativeCallstack(threadInfo.thread_id, frameCount * sizeof(ulong), (byte*)pFrames);
                 }
                 finally
                 {

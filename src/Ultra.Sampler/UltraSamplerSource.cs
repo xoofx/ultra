@@ -4,12 +4,11 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
-using System.Runtime.CompilerServices;
 using Ultra.Core;
 
 namespace Ultra.Sampler;
 
-[EventSource(Name = UltraSamplerConstants.ProviderName, Guid = UltraSamplerConstants.IdAsString)]
+[EventSource(Name = UltraSamplerConstants.ProviderName)] // Cannot set the ProviderGuid that is not used https://github.com/dotnet/diagnostics/issues/389
 internal sealed class UltraSamplerSource : EventSource
 {
     public static readonly UltraSamplerSource Log = new();
@@ -18,23 +17,23 @@ internal sealed class UltraSamplerSource : EventSource
     {
     }
 
-    [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational)]
+    [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeCallStackEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void OnNativeCallstack(ulong threadId, int frameCount, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
+    public unsafe void NativeCallstack(ulong threadId, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
     {
         var evt = stackalloc EventData[3];
         evt[0].DataPointer = (nint)(void*)&threadId;
         evt[0].Size = sizeof(ulong);
-        evt[1].DataPointer = (nint)(void*)&frameCount;
+        evt[1].DataPointer = (nint)(void*)&framesSize;
         evt[1].Size = sizeof(int);
         evt[2].DataPointer = (nint)(void*)&frames;
-        evt[2].Size = frameCount * sizeof(ulong);
+        evt[2].Size = framesSize;
         WriteEventCore(UltraSamplerConstants.NativeCallStackEventId, 3, evt);
     }
 
-    [Event(UltraSamplerConstants.NativeModuleEventId, Level = EventLevel.Informational)]
+    [Event(UltraSamplerConstants.NativeModuleEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeModuleEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void OnNativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, DateTime timestampUtc, int modulePathUtf8Length, byte[]? modulePathUtf8) // byte[] is last to allow perfview to visualize previous fixed size arguments
+    public unsafe void NativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, DateTime timestampUtc, byte[]? modulePathUtf8) // byte[] is last to allow perfview to visualize previous fixed size arguments
     {
         var evt = stackalloc EventData[6];
         evt[0].DataPointer = (nint)(void*)&nativeModuleEventKind;
@@ -48,13 +47,14 @@ internal sealed class UltraSamplerSource : EventSource
         evt[3].Size = sizeof(long);
         fixed (byte* evtPathPtr = modulePathUtf8)
         {
-            evt[4].DataPointer = (nint)(void*)&modulePathUtf8Length;
+            var modulePathUtf8Size = modulePathUtf8?.Length ?? 0;
+            evt[4].DataPointer = (nint)(void*)&modulePathUtf8Size;
             evt[4].Size = sizeof(int);
 
-            if (modulePathUtf8Length > 0)
+            if (modulePathUtf8Size > 0)
             {
                 evt[5].DataPointer = (nint)evtPathPtr;
-                evt[5].Size = modulePathUtf8Length;
+                evt[5].Size = modulePathUtf8Size;
             }
             else
             {

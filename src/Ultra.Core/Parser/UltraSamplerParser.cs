@@ -9,10 +9,9 @@ namespace Ultra.Core;
 
 public sealed class UltraSamplerParser : TraceEventParser
 {
-    public static Guid ProviderGuid => UltraSamplerConstants.ProviderGuid;
+    public static readonly Guid ProviderGuid = UltraSamplerConstants.ProviderGuid;
 
-
-    public static string ProviderName => UltraSamplerConstants.ProviderName;
+    public const string ProviderName = UltraSamplerConstants.ProviderName;
 
     private static volatile TraceEvent[]? _templates;
     
