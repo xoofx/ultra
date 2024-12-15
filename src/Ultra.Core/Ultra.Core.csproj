@@ -28,10 +28,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Ultra.Sampler\UltraSamplerConstants.cs" Link="UltraSamplerConstants.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../../img/ultra.png" Pack="true" PackagePath="/" />
     <None Include="readme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
@@ -54,5 +50,9 @@
       <Link>libUltraSamplerHook.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
   </ItemGroup>
 </Project>

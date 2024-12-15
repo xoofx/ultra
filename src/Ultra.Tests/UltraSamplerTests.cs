@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using Ultra.Core;
 using Ultra.Sampler;
 using Ultra.Sampler.MacOS;
 
@@ -22,5 +23,13 @@ public class UltraSamplerTests
         {
             Console.WriteLine($"{nativeModule}");
         }
+    }
+
+    [TestMethod]
+    public void TestEventSource()
+    {
+        var sampler = UltraSamplerSource.Log;
+        Assert.AreEqual(UltraSamplerConstants.ProviderName, sampler.Name);
+        Assert.AreEqual(UltraSamplerConstants.ProviderGuid, sampler.Guid);
     }
 }

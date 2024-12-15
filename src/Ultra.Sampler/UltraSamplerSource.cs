@@ -11,6 +11,7 @@ namespace Ultra.Sampler;
 [EventSource(Name = UltraSamplerConstants.ProviderName)] // Cannot set the ProviderGuid that is not used https://github.com/dotnet/diagnostics/issues/389
 internal sealed class UltraSamplerSource : EventSource
 {
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicMethods, typeof(UltraSamplerSource))]
     public static readonly UltraSamplerSource Log = new();
 
     private UltraSamplerSource()
