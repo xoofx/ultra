@@ -75,6 +75,15 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     {
         _nextModuleEventIndexToLog = 0;
         _captureEnabled = true;
+        // Make sure to always send the manifest before resuming the capture thread
+        try
+        {
+            EventSource.SendCommand(UltraSamplerSource.Log, EventCommand.SendManifest, null);
+        }
+        catch
+        {
+            // Ignore
+        }
         _resumeCaptureThread.Set();
     }
 
