@@ -67,7 +67,7 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
     private static readonly string[] _payloadNames =
     [
         nameof(FrameThreadId),
-        nameof(FrameCount),
+        nameof(FrameSize),
         nameof(FrameAddresses)
     ];
 
@@ -80,9 +80,9 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
 
     public ulong FrameThreadId => (ulong)GetInt64At(0);
 
-    public int FrameCount => GetInt32At(8);
+    public int FrameSize => GetInt32At(8);
 
-    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 12, FrameCount);
+    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 12, FrameSize / sizeof(ulong));
 
     /// <inheritdoc />
 
@@ -93,7 +93,7 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
             case 0:
                 return FrameThreadId;
             case 1:
-                return FrameCount;
+                return FrameSize;
             case 2:
                 return FrameAddresses.ToArray();
             default:

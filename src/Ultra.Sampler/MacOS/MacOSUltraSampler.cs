@@ -19,7 +19,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private readonly AutoResetEvent _resumeCaptureThread;
 
     private const int MaximumFrames = 4096;
-    private readonly ulong[] _frames = new ulong[MaximumFrames];
+    private readonly ulong[] _frames;
 
     private const int DefaultImageCount = 1024;
     private UnsafeList<NativeModuleEvent> _moduleEvents = new(DefaultImageCount);
@@ -33,6 +33,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
     public MacOSUltraSampler()
     {
+        _frames = GC.AllocateArray<ulong>(4096, true);
         _resumeCaptureThread = new AutoResetEvent(false);
 
         _callbackDyldAdded = new MacOSLibSystem.dyld_register_callback(CallbackDyldAdded);
