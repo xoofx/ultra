@@ -133,6 +133,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         // Make sure to always send the manifest before resuming the capture thread
         try
         {
+            // TODO: Doesn't seem to work on macOS (only valid for ETW?)
             EventSource.SendCommand(UltraSamplerSource.Log, EventCommand.SendManifest, null);
         }
         catch
