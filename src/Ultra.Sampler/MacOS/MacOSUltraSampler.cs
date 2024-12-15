@@ -75,15 +75,6 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     {
         _nextModuleEventIndexToLog = 0;
         _captureEnabled = true;
-        // Make sure to always send the manifest before resuming the capture thread
-        try
-        {
-            EventSource.SendCommand(UltraSamplerSource.Log, EventCommand.SendManifest, null);
-        }
-        catch
-        {
-            // Ignore
-        }
         _resumeCaptureThread.Set();
     }
 
@@ -103,10 +94,18 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             MacOS.MacOSLibSystem.pthread_threadid_np(0, out var currentThreadId)
                 .ThrowIfError("pthread_threadid_np");
 
+            bool sendManifest = true;
+
             while (!_stopped)
             {
                 if (_captureEnabled)
                 {
+                    if (sendManifest)
+                    {
+                        SendManifest();
+                        sendManifest = false;
+                    }
+
                     // Load all pending native module events before sampling
                     NotifyPendingNativeModuleEvents();
 
@@ -119,12 +118,26 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 else
                 {
                     _resumeCaptureThread.WaitOne();
+                    sendManifest = true;
                 }
             }
         }
         catch (Exception ex)
         {
             Trace.TraceError($"Ultra-Sampler unexpected exception while sampling: {ex}");
+        }
+    }
+
+    private static void SendManifest()
+    {
+        // Make sure to always send the manifest before resuming the capture thread
+        try
+        {
+            EventSource.SendCommand(UltraSamplerSource.Log, EventCommand.SendManifest, null);
+        }
+        catch
+        {
+            // Ignore
         }
     }
 
@@ -245,7 +258,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 }
             }
         }
-        
+
         return size;
     }
 
