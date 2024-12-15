@@ -7,7 +7,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing.Parsers;
-using Ultra.Sampler;
 
 namespace Ultra.Core;
 
@@ -110,7 +109,7 @@ internal class DiagnosticPortSession
                 _nettraceFileStream = new FileStream(_nettraceFilePath, FileMode.Create, FileAccess.Write, FileShare.Read, 65536, FileOptions.Asynchronous);
 
                 long keywords = -1;
-                var providerName = UltraSamplerConstants.Name;
+                var providerName = UltraSamplerConstants.ProviderName;
                 var level = EventLevel.Verbose;
 
                 if (!_sampler)

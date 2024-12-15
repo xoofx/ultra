@@ -5,10 +5,11 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
 using System.Runtime.CompilerServices;
+using Ultra.Core;
 
 namespace Ultra.Sampler;
 
-[EventSource(Name = UltraSamplerConstants.Name, Guid = UltraSamplerConstants.IdAsString)]
+[EventSource(Name = UltraSamplerConstants.ProviderName, Guid = UltraSamplerConstants.IdAsString)]
 internal sealed class UltraSamplerSource : EventSource
 {
     public static readonly UltraSamplerSource Log = new();
@@ -17,7 +18,7 @@ internal sealed class UltraSamplerSource : EventSource
     {
     }
 
-    [Event(UltraSamplerConstants.NativeCallStackEvent, Level = EventLevel.Informational)]
+    [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
     public unsafe void OnNativeCallstack(ulong threadId, int frameCount, ulong frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
     {
@@ -28,12 +29,11 @@ internal sealed class UltraSamplerSource : EventSource
         evt[1].Size = sizeof(int);
         evt[2].DataPointer = (nint)frames;
         evt[2].Size = frameCount * sizeof(ulong);
-        WriteEventCore(UltraSamplerConstants.NativeCallStackEvent, 3, evt);
+        WriteEventCore(UltraSamplerConstants.NativeCallStackEventId, 3, evt);
     }
 
-    [Event(UltraSamplerConstants.NativeModuleEvent, Level = EventLevel.Informational)]
+    [Event(UltraSamplerConstants.NativeModuleEventId, Level = EventLevel.Informational)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    [SkipLocalsInit]
     public unsafe void OnNativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, DateTime timestampUtc, int modulePathUtf8Length, byte[]? modulePathUtf8) // byte[] is last to allow perfview to visualize previous fixed size arguments
     {
         var evt = stackalloc EventData[6];
@@ -57,7 +57,7 @@ internal sealed class UltraSamplerSource : EventSource
                 evt[5].Size = modulePathUtf8Length;
             }
             
-            WriteEventCore(UltraSamplerConstants.NativeModuleEvent, modulePathUtf8Length > 0 ? 5 : 4, evt);
+            WriteEventCore(UltraSamplerConstants.NativeModuleEventId, modulePathUtf8Length > 0 ? 6 : 5, evt);
         }
     }
 
