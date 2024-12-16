@@ -4,6 +4,7 @@
 
 using System.Text;
 using Microsoft.Diagnostics.Tracing;
+using Ultra.Sampler;
 
 namespace Ultra.Core;
 
@@ -142,7 +143,7 @@ public sealed class UltraNativeModuleTraceEvent : TraceEvent
         _target = target;
     }
 
-    public UltraNativeModuleEventKind NativeModuleEventKind => (UltraNativeModuleEventKind)GetInt32At(0);
+    public UltraSamplerNativeModuleEventKind NativeModuleEventKind => (UltraSamplerNativeModuleEventKind)GetInt32At(0);
 
     public ulong LoadAddress => (ulong)GetInt64At(4);
 
@@ -198,13 +199,4 @@ public sealed class UltraNativeModuleTraceEvent : TraceEvent
     protected override void Validate()
     {
     }
-}
-
-public enum UltraNativeModuleEventKind
-{
-    AlreadyLoaded = 0,
-
-    Loaded = 1,
-
-    Unloaded = 2
 }

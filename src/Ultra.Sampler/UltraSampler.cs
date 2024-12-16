@@ -10,7 +10,7 @@ internal abstract class UltraSampler
 
     public bool IsEnabled { get; private set; }
 
-    public static UltraSampler Instance { get; } = OperatingSystem.IsMacOS() ? new MacOSUltraSampler() : throw new PlatformNotSupportedException();
+    public static UltraSampler Instance { get; } = OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? new MacOSUltraSampler() : new NopSampler();
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "ultra_sampler_start")]
     internal static void NativeStart() => Instance.Start();
@@ -59,4 +59,24 @@ internal abstract class UltraSampler
     protected abstract void EnableImpl();
 
     protected abstract void DisableImpl();
+
+
+    private sealed class NopSampler : UltraSampler
+    {
+        protected override void StartImpl()
+        {
+        }
+
+        protected override void StopImpl()
+        {
+        }
+
+        protected override void EnableImpl()
+        {
+        }
+
+        protected override void DisableImpl()
+        {
+        }
+    }
 }

@@ -4,7 +4,6 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
-using Ultra.Core;
 
 namespace Ultra.Sampler;
 
@@ -20,7 +19,7 @@ internal sealed class UltraSamplerSource : EventSource
 
     [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeCallStackEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void NativeCallstack(ulong threadId, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
+    public unsafe void NativeCallstack(ulong threadId, int threadState, int threadCpuUsage, int previousFrameCount, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
     {
         var evt = stackalloc EventData[3];
         evt[0].DataPointer = (nint)(void*)&threadId;

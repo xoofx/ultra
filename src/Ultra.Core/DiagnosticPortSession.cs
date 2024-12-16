@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using Ultra.Sampler;
 
 namespace Ultra.Core;
 

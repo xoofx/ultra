@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -30,6 +31,7 @@ internal static partial class MacOSLibSystem
 
     public const int TASK_DYLD_INFO = 17;
     public const int THREAD_IDENTIFIER_INFO = 4;
+    public const int THREAD_EXTENDED_INFO = 5;
     public const int x86_THREAD_STATE64 = 4;
     public const int ARM_THREAD_STATE64 = 6;
     public const int VM_REGION_BASIC_INFO_64 = 9;
@@ -37,6 +39,8 @@ internal static partial class MacOSLibSystem
     public static readonly unsafe int TASK_DYLD_INFO_COUNT = sizeof(task_dyld_info) / sizeof(uint);
 
     public static readonly unsafe int THREAD_IDENTIFIER_INFO_COUNT = sizeof(thread_identifier_info) / sizeof(uint);
+    public static readonly unsafe int THREAD_EXTENDED_INFO_COUNT = sizeof(thread_extended_info) / sizeof(uint);
+
 
     public static readonly unsafe int x86_THREAD_STATE64_COUNT = sizeof(x86_thread_state64_t) / sizeof(uint);
     public static readonly unsafe int ARM_THREAD_STATE64_COUNT = sizeof(arm_thread_state64_t) / sizeof(uint);
@@ -64,15 +68,19 @@ internal static partial class MacOSLibSystem
     public static unsafe partial return_t task_resume(task_inspect_t target_task);
 
     [LibraryImport(LibSystem)]
+    [SuppressGCTransition] // We don't want to transition to preemptive mode as we are dealing high-performance profiling
     public static partial return_t thread_suspend(thread_act_t target_act);
 
     [LibraryImport(LibSystem)]
+    [SuppressGCTransition] // We don't want to transition to preemptive mode as we are dealing high-performance profiling
     public static partial return_t thread_resume(thread_act_t target_act);
 
     [LibraryImport(LibSystem)]
-    public static partial return_t thread_info(thread_act_t target_act, uint flavor, out /*int*/thread_identifier_info thread_info, ref /*uint*/int thread_info_count);
+    [SuppressGCTransition] // We don't want to transition to preemptive mode as we are dealing high-performance profiling
+    public static unsafe partial return_t thread_info(thread_act_t target_act, uint flavor, void* thread_info, ref /*uint*/int thread_info_count);
 
     [LibraryImport(LibSystem)]
+    [SuppressGCTransition] // We don't want to transition to preemptive mode as we are dealing high-performance profiling
     public static partial return_t thread_get_state(thread_inspect_t target_act, uint flavor, /*uint**/nint old_state, ref /*uint*/int old_state_count);
 
     [LibraryImport(LibSystem)]
@@ -376,6 +384,63 @@ internal static partial class MacOSLibSystem
         public uint	reserved3;	/* reserved */
     }
 
+    public const int THREAD_BASIC_INFO = 3;
+
+    public struct thread_basic_info_data_t
+    {
+        public uint user_time;
+        public uint system_time;
+        public int cpu_usage;
+        public int policy;
+        public TH_STATE run_state;
+        public TH_FLAGS flags;
+        public int suspend_count;
+        public int sleep_time;
+    }
+
+    public unsafe struct thread_extended_info
+    {           // same as proc_threadinfo (from proc_info.h) & proc_threadinfo_internal (from bsd_taskinfo.h)
+        public ulong pth_user_time;          /* user run time */
+        public ulong pth_system_time;        /* system run time */
+        public int pth_cpu_usage;          /* scaled cpu usage percentage */
+        public int pth_policy;                     /* scheduling policy in effect */
+        public TH_STATE pth_run_state;          /* run state (see below) */
+        public TH_FLAGS pth_flags;              /* various flags (see below) */
+        public int pth_sleep_time;         /* number of seconds that thread */
+        public int pth_curpri;                     /* cur priority*/
+        public int pth_priority;           /*  priority*/
+        public int pth_maxpriority;        /* max priority*/
+        public fixed byte pth_name[64];    /* thread name, if any */
+    };
+    public enum TH_STATE
+    {
+        TH_STATE_RUNNING = 1, /* thread is running normally */
+        TH_STATE_STOPPED = 2, /* thread is stopped */
+        TH_STATE_WAITING = 3, /* thread is waiting normally */
+        TH_STATE_UNINTERRUPTIBLE = 4, /* thread is in an uninterruptible wait */
+        TH_STATE_HALTED = 5 /* thread is halted at a clean point */
+    }
+
+    public const TH_STATE TH_STATE_RUNNING = TH_STATE.TH_STATE_RUNNING;
+    public const TH_STATE TH_STATE_STOPPED = TH_STATE.TH_STATE_STOPPED;
+    public const TH_STATE TH_STATE_WAITING = TH_STATE.TH_STATE_WAITING;
+    public const TH_STATE TH_STATE_UNINTERRUPTIBLE = TH_STATE.TH_STATE_UNINTERRUPTIBLE;
+    public const TH_STATE TH_STATE_HALTED = TH_STATE.TH_STATE_HALTED;
+
+    public const int TH_USAGE_SCALE = 1000; // Scale factor for usage values
+
+    [Flags]
+    public enum TH_FLAGS 
+    {
+        TH_FLAGS_SWAPPED = 0x1,     /* thread is swapped out */
+        TH_FLAGS_IDLE = 0x2,     /* thread is an idle thread */
+        TH_FLAGS_GLOBAL_FORCED_IDLE = 0x4 /* thread performs global forced idle */
+    }
+
+    public const TH_FLAGS TH_FLAGS_SWAPPED = TH_FLAGS.TH_FLAGS_SWAPPED;
+    public const TH_FLAGS TH_FLAGS_IDLE = TH_FLAGS.TH_FLAGS_IDLE;
+    public const TH_FLAGS TH_FLAGS_GLOBAL_FORCED_IDLE = TH_FLAGS.TH_FLAGS_GLOBAL_FORCED_IDLE;
+    
     public const uint LC_UUID = 0x1b;
     public const uint LC_SEGMENT_64 = 0x19;
 

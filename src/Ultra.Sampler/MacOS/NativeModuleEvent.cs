@@ -8,7 +8,7 @@ namespace Ultra.Sampler.MacOS;
 
 internal struct NativeModuleEvent
 {
-    public NativeModuleEventKind Kind;
+    public UltraSamplerNativeModuleEventKind Kind;
     public ulong LoadAddress;
     public ulong Size;
     public byte[]? Path;

@@ -2,11 +2,13 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
-namespace Ultra.Sampler.MacOS;
+namespace Ultra.Sampler;
 
-internal enum NativeModuleEventKind
+public enum UltraSamplerNativeModuleEventKind
 {
     AlreadyLoaded = 0,
+
     Loaded = 1,
+
     Unloaded = 2
 }

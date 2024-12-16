@@ -4,4 +4,4 @@
 
 namespace Ultra.Sampler.MacOS;
 
-internal unsafe delegate void NativeCallstackDelegate(ulong threadId, int frameCount, byte* pFrames);
+internal unsafe delegate void NativeSamplingDelegate(ulong threadId, int threadState, int threadCpuUsage, int previousFrameCount, int deltaFrameSizeInBytes, byte* deltaFrames);
