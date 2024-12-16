@@ -4,6 +4,8 @@
 
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
+using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace Ultra.Core;
 
@@ -17,7 +19,10 @@ internal class UltraEventPipeProcessor
 
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
-    
+    private readonly Dictionary<string, int> _mapModuleNameToIndex = new ();
+    private readonly List<ModuleAddress> _modules = new();
+    private readonly List<ModuleAddress> _sortedModules = new();
+
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource)
     {
         _samplerEventSource = samplerEventSource;
@@ -88,12 +93,76 @@ internal class UltraEventPipeProcessor
     {
     }
     
-    private void SamplerParserOnEventNativeModule(UltraNativeModuleTraceEvent obj)
+    private void SamplerParserOnEventNativeModule(UltraNativeModuleTraceEvent evt)
     {
+        if (evt.ModulePath is not null)
+        {
+            Console.WriteLine($"Module {evt.NativeModuleEventKind} Path: {evt.ModulePath}, LoadAddress: 0x{evt.LoadAddress:X}, Size: 0x{evt.Size:X}, Timestamp: {evt.TimestampUtc}");
+
+            if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
+            {
+                _mapModuleNameToIndex.Remove(evt.ModulePath);
+            }
+            else
+            {
+                if (!_mapModuleNameToIndex.TryGetValue(evt.ModulePath, out var index))
+                {
+                    index = _modules.Count;
+                    _mapModuleNameToIndex.Add(evt.ModulePath, index);
+                    _modules.Add(new(evt.ModulePath, evt.LoadAddress, evt.Size));
+                }
+                else
+                {
+                    _modules[index] = new(evt.ModulePath, evt.LoadAddress, evt.Size);
+                }
+
+                _sortedModules.Clear();
+                _sortedModules.AddRange(_modules);
+
+                // Always keep the list sorted
+                _sortedModules.Sort(static (left, right) => left.Address.CompareTo(right.Address));
+            }
+        }
+
     }
 
     private void SamplerParserOnEventNativeCallstack(UltraNativeCallstackTraceEvent obj)
     {
+        PrintCallStack(obj);
+    }
+    
+    private void PrintCallStack(UltraNativeCallstackTraceEvent callstackTraceEvent)
+    {
+        var sortedModules = CollectionsMarshal.AsSpan(this._sortedModules);
+        Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
+        var span = callstackTraceEvent.FrameAddresses;
+        for (var i = 0; i < span.Length; i++)
+        {
+            var frame = span[i];
+            var moduleIndex = FindModuleIndex(sortedModules, frame);
+            if (moduleIndex != -1)
+            {
+                var module = sortedModules[moduleIndex];
+                Console.WriteLine($"  {module.ModulePath}+0x{frame - module.Address:X} (Module: 0x{module.Address:X} Address: 0x{frame:X})");
+            }
+            else
+            {
+                Console.WriteLine($"  0x{frame:X}");
+            }
+        }
+    }
+
+    private static int FindModuleIndex(Span<ModuleAddress> modules, ulong address)
+    {
+        for (var i = 0; i < modules.Length; i++)
+        {
+            if (address >= modules[i].Address && address < modules[i].Address + modules[i].Size)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     public void Run()
@@ -106,15 +175,5 @@ internal class UltraEventPipeProcessor
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
+    private record struct ModuleAddress(string ModulePath, ulong Address, ulong Size);
 }
