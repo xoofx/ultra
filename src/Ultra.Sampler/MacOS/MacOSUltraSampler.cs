@@ -19,7 +19,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private Thread? _samplerThread;
     private ulong _samplerThreadId;
     private readonly AutoResetEvent _samplerResumeThreadEvent;
-    
+
     // Frames information
     private const int MaximumFrames = 4096;
     private readonly ulong[] _frames; // 32 KB
@@ -366,7 +366,6 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             // Compute the same frame count
             var sameFrameCount = ComputeSameFrameCount(threadInfo.thread_id, frameCount, pFrames);
             frameCount -= sameFrameCount;
-            pFrames += sameFrameCount;
 
             // Long only the delta frames
             samplingDelegate(threadInfo.thread_id, (int)threadExtendedInfo.pth_run_state, (int)threadExtendedInfo.pth_cpu_usage, sameFrameCount, frameCount * sizeof(ulong), (byte*)pFrames);
@@ -387,9 +386,10 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         // Swap the active and current thread ids
         (_currentThreadIds, _activeThreadIds) = (_activeThreadIds, _currentThreadIds);
     }
-    
+
     private int ComputeSameFrameCount(ulong threadId, int frameCount, ulong* frames)
     {
+        int originalFrameCount = frameCount;
         // We limit the frame recording to MaximumCompressedFrameCount
         frameCount = Math.Min(frameCount, MaximumCompressedFrameCount);
 
@@ -421,10 +421,10 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             int previousFrameCount = (int)previousFrame;
             previousFrame = ref Unsafe.Add(ref previousFrame, 1);
 
-            var minFrameCount = Math.Min(previousFrameCount, frameCount);
-            for (; sameFrameCount < minFrameCount; sameFrameCount++)
+            var maxFrameCount = Math.Min(previousFrameCount, frameCount);
+            for (; sameFrameCount < maxFrameCount; sameFrameCount++)
             {
-                if (frames[sameFrameCount] != previousFrame)
+                if (frames[originalFrameCount - sameFrameCount - 1] != previousFrame)
                 {
                     break;
                 }
@@ -439,9 +439,9 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         previousFrame = ref Unsafe.Add(ref previousFrame, 1);
         for (int i = 0; i < frameCount; i++)
         {
-            Unsafe.Add(ref previousFrame, i) = frames[i];
+            Unsafe.Add(ref previousFrame, i) = frames[originalFrameCount - i - 1];
         }
-        
+
         return sameFrameCount;
     }
 
