@@ -68,6 +68,9 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
     private static readonly string[] _payloadNames =
     [
         nameof(FrameThreadId),
+        nameof(ThreadState),
+        nameof(ThreadCpuUsage),
+        nameof(PreviousFrameCount),
         nameof(FrameSize),
         nameof(FrameAddresses)
     ];
@@ -81,9 +84,15 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
 
     public ulong FrameThreadId => (ulong)GetInt64At(0);
 
-    public int FrameSize => GetInt32At(8);
+    public UltraSamplerThreadState ThreadState => (UltraSamplerThreadState)GetInt32At(8);
 
-    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 12, FrameSize / sizeof(ulong));
+    public double ThreadCpuUsage => GetInt32At(12) / 1000.0;
+
+    public int PreviousFrameCount => GetInt32At(16);
+    
+    public int FrameSize => GetInt32At(20);
+
+    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 24, FrameSize / sizeof(ulong));
 
     /// <inheritdoc />
 
@@ -94,8 +103,14 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
             case 0:
                 return FrameThreadId;
             case 1:
-                return FrameSize;
+                return (int)ThreadState;
             case 2:
+                return GetInt32At(12);
+            case 3:
+                return PreviousFrameCount;
+            case 4:
+                return FrameSize;
+            case 5:
                 return FrameAddresses.ToArray();
             default:
                 throw new ArgumentOutOfRangeException(nameof(index));
