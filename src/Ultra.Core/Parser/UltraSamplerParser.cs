@@ -119,6 +119,7 @@ public sealed class UltraNativeCallstackTraceEvent : TraceEvent
 
     public override string[] PayloadNames => _payloadNames;
 
+    /// <inheritdoc />
     protected override Delegate? Target
     {
         get => _target;

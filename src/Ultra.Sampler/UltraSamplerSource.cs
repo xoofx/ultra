@@ -39,9 +39,9 @@ internal sealed class UltraSamplerSource : EventSource
 
     [Event(UltraSamplerConstants.NativeModuleEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeModuleEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void NativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, DateTime timestampUtc, byte[]? modulePathUtf8) // byte[] is last to allow perfview to visualize previous fixed size arguments
+    public unsafe void NativeModuleEvent(int nativeModuleEventKind, ulong loadAddress, ulong size, DateTime timestampUtc, Guid uuid, byte[]? modulePathUtf8) // byte[] is last to allow perfview to visualize previous fixed size arguments
     {
-        var evt = stackalloc EventData[6];
+        var evt = stackalloc EventData[7];
         evt[0].DataPointer = (nint)(void*)&nativeModuleEventKind;
         evt[0].Size = sizeof(int);
         evt[1].DataPointer = (nint)(void*)&loadAddress;
@@ -51,24 +51,26 @@ internal sealed class UltraSamplerSource : EventSource
         var utcFileTime = timestampUtc.ToFileTimeUtc();
         evt[3].DataPointer = (nint)(void*)&utcFileTime;
         evt[3].Size = sizeof(long);
+        evt[4].DataPointer = (nint)(void*)&uuid;
+        evt[4].Size = sizeof(Guid);
         fixed (byte* evtPathPtr = modulePathUtf8)
         {
             var modulePathUtf8Size = modulePathUtf8?.Length ?? 0;
-            evt[4].DataPointer = (nint)(void*)&modulePathUtf8Size;
-            evt[4].Size = sizeof(int);
+            evt[5].DataPointer = (nint)(void*)&modulePathUtf8Size;
+            evt[5].Size = sizeof(int);
 
             if (modulePathUtf8Size > 0)
             {
-                evt[5].DataPointer = (nint)evtPathPtr;
-                evt[5].Size = modulePathUtf8Size;
+                evt[6].DataPointer = (nint)evtPathPtr;
+                evt[6].Size = modulePathUtf8Size;
             }
             else
             {
-                evt[5].DataPointer = (nint)(void*)&loadAddress;
-                evt[5].Size = 0;
+                evt[6].DataPointer = (nint)(void*)&loadAddress;
+                evt[6].Size = 0;
             }
 
-            WriteEventCore(UltraSamplerConstants.NativeModuleEventId, 6, evt);
+            WriteEventCore(UltraSamplerConstants.NativeModuleEventId, 7, evt);
         }
     }
 

@@ -12,6 +12,7 @@ internal struct NativeModuleEvent
     public ulong LoadAddress;
     public ulong Size;
     public byte[]? Path;
+    public Guid Uuid;
     public DateTime TimestampUtc;
 
     public override string ToString()

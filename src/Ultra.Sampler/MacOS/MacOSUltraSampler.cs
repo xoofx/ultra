@@ -207,6 +207,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         evt.Path = path.ToArray();
         evt.TimestampUtc = DateTime.UtcNow;
         evt.Size = GetDyldCodeSize(loadAddress);
+        TryGetUuidFromMacHeader(loadAddress, out evt.Uuid);
 
         lock (_moduleEventLock)
         {
@@ -230,7 +231,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             for(; _nextModuleEventIndexToLog < events.Length; _nextModuleEventIndexToLog++)
             {
                 var evt = events[_nextModuleEventIndexToLog];
-                UltraSamplerSource.Log.NativeModuleEvent((int)evt.Kind, evt.LoadAddress, evt.Size, evt.TimestampUtc, evt.Path);
+                UltraSamplerSource.Log.NativeModuleEvent((int)evt.Kind, evt.LoadAddress, evt.Size, evt.TimestampUtc, evt.Uuid, evt.Path);
             }
         }
     }
@@ -425,7 +426,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
         int sameFrameCount = 0;
 
-        ref var allCompressedFrames = ref _allCompressedFrames[0];
+        ref var allCompressedFrames = ref MemoryMarshal.GetArrayDataReference(_allCompressedFrames);
         var indexInCompressedFrames = index * MaximumCompressedFrameTotalCount;
         ref ulong previousFrame = ref Unsafe.Add(ref allCompressedFrames, indexInCompressedFrames);
 
