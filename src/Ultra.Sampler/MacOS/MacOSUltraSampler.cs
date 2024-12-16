@@ -32,7 +32,6 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private UnsafeDictionary<ulong, int> _threadIdToCompressedFrameIndex = new(MaximumThreadCountForCompressedFrames);
     private UnsafeHashSet<ulong> _activeThreadIds = new(MaximumThreadCountForCompressedFrames);
     private UnsafeHashSet<ulong> _currentThreadIds = new(MaximumThreadCountForCompressedFrames);
-    private UnsafeList<ulong> _tempThreadIds = new(MaximumThreadCountForCompressedFrames);
 
     // Modules
     private const int DefaultImageCount = 1024;
@@ -48,6 +47,9 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
     public MacOSUltraSampler()
     {
+        // Make sure to use the instance to trigger the constructor of the EventSource so that it is registered in the runtime!
+        _samplerEventSource = UltraSamplerSource.Log;
+
         _frames = GC.AllocateArray<ulong>(4096, true);
         _allCompressedFrames = GC.AllocateArray<ulong>(MaximumCompressedFrameTotalCount * MaximumThreadCountForCompressedFrames, true);
 
@@ -61,10 +63,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
         _callbackDyldAdded = new MacOSLibSystem.dyld_register_callback(CallbackDyldAdded);
         _callbackDyldRemoved = new MacOSLibSystem.dyld_register_callback(CallbackDyldRemoved);
-
-        // Make sure to use the instance to trigger the constructor of the EventSource so that it is registered in the runtime!
-        _samplerEventSource = UltraSamplerSource.Log;
-
+        
         // Register dyld callbacks
         _initializingModules = true;
         MacOSLibSystem._dyld_register_func_for_add_image(Marshal.GetFunctionPointerForDelegate(_callbackDyldAdded));
@@ -141,6 +140,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 }
                 else
                 {
+                    ClearThreadStates();
                     _samplerResumeThreadEvent.WaitOne();
                     sendManifest = true;
                 }
@@ -150,6 +150,19 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         {
             Console.Error.WriteLine($"Ultra-Sampler unexpected exception while sampling: {ex}");
         }
+    }
+
+
+    private void ClearThreadStates()
+    {
+        // Reset the state for threads
+        _currentThreadIds.Clear();
+        _activeThreadIds.Clear();
+        foreach (var compressedIndex in _threadIdToCompressedFrameIndex.Values)
+        {
+            _freeCompressedFramesIndices.Add(compressedIndex);
+        }
+        _threadIdToCompressedFrameIndex.Clear();
     }
 
     private static void SendManifest()
