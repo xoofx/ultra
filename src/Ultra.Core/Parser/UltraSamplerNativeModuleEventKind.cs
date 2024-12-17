@@ -4,7 +4,7 @@
 
 namespace Ultra.Core;
 
-public enum UltraSamplerNativeModuleEventKind
+internal enum UltraSamplerNativeModuleEventKind
 {
     AlreadyLoaded = 0,
 
