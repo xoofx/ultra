@@ -243,16 +243,17 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         if (header->magic != MacOSLibSystem.MH_MAGIC_64) throw new InvalidOperationException("Invalid magic header");
 
         var nbCommands = header->ncmds;
-        var commands = (MacOSLibSystem.load_command*)((byte*)header + sizeof(MacOSLibSystem.mach_header_64));
-        for(uint i = 0; i < nbCommands; i++)
+        ref var firstCommand = ref *(MacOSLibSystem.load_command*)((byte*)header + sizeof(MacOSLibSystem.mach_header_64));
+        ref var command = ref firstCommand;
+        for (uint i = 0; i < nbCommands; i++)
         {
-            var command = commands[i];
             if (command.cmd == MacOSLibSystem.LC_UUID)
             {
-                var uuidCommand = (MacOSLibSystem.uuid_command*)Unsafe.AsPointer(ref command);
-                guid = uuidCommand->uuid;
+                ref var uuidCommand = ref Unsafe.As<MacOSLibSystem.load_command, MacOSLibSystem.uuid_command>(ref command);
+                guid = uuidCommand.uuid;
                 return true;
             }
+            command = ref Unsafe.AddByteOffset(ref command, command.cmdsize);
         }
 
         return false;
@@ -267,10 +268,10 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         if (header->magic != MacOSLibSystem.MH_MAGIC_64) throw new InvalidOperationException("Invalid magic header");
 
         var nbCommands = header->ncmds;
-        var commands = (MacOSLibSystem.load_command*)((byte*)header + sizeof(MacOSLibSystem.mach_header_64));
-        for(uint i = 0; i < nbCommands; i++)
+        ref var firstCommand = ref *(MacOSLibSystem.load_command*)((byte*)header + sizeof(MacOSLibSystem.mach_header_64));
+        ref var command = ref firstCommand;
+        for (uint i = 0; i < nbCommands; i++)
         {
-            ref var command = ref commands[i];
             if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
             {
                 ref var segment = ref Unsafe.As<MacOSLibSystem.load_command,MacOSLibSystem.segment_command_64>(ref command);
@@ -279,13 +280,14 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     startAddress = segment.vmaddr;
                 }
             }
+            command = ref Unsafe.AddByteOffset(ref command, command.cmdsize);
         }
 
         if (startAddress == ulong.MaxValue) return 0;
-
+        
+        command = ref firstCommand;
         for (uint i = 0; i < nbCommands; i++)
         {
-            ref var command = ref commands[i];
             if (command.cmd == MacOSLibSystem.LC_SEGMENT_64)
             {
                 ref var segment = ref Unsafe.As<MacOSLibSystem.load_command, MacOSLibSystem.segment_command_64>(ref command);
@@ -296,6 +298,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     size = newSize;
                 }
             }
+            command = ref Unsafe.AddByteOffset(ref command, command.cmdsize);
         }
 
         return size;

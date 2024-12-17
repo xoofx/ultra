@@ -97,7 +97,7 @@ internal class UltraEventPipeProcessor
     {
         if (evt.ModulePath is not null)
         {
-            Console.WriteLine($"Module {evt.NativeModuleEventKind} Path: {evt.ModulePath}, LoadAddress: 0x{evt.LoadAddress:X}, Size: 0x{evt.Size:X}, Timestamp: {evt.TimestampUtc}");
+            Console.WriteLine($"Module {evt.NativeModuleEventKind} Path: {evt.ModulePath}, LoadAddress: 0x{evt.LoadAddress:X}, Size: 0x{evt.Size:X}, Timestamp: {evt.TimestampUtc}, Uuid: {evt.Uuid}");
 
             if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
             {
