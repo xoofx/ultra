@@ -5,7 +5,9 @@
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using XenoAtom.Collections;
 
 namespace Ultra.Core;
 
@@ -20,8 +22,9 @@ internal class UltraEventPipeProcessor
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
     private readonly Dictionary<string, int> _mapModuleNameToIndex = new ();
-    private readonly List<ModuleAddress> _modules = new();
-    private readonly List<ModuleAddress> _sortedModules = new();
+    private readonly List<NativeModule> _nativeModules = new();
+    private readonly List<AddressRange> _nativeModuleAddressRanges = new();
+    private readonly List<AddressRange> _sortedNativeModuleAddressRanges = new();
 
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource)
     {
@@ -107,20 +110,18 @@ internal class UltraEventPipeProcessor
             {
                 if (!_mapModuleNameToIndex.TryGetValue(evt.ModulePath, out var index))
                 {
-                    index = _modules.Count;
+                    index = _nativeModules.Count;
                     _mapModuleNameToIndex.Add(evt.ModulePath, index);
-                    _modules.Add(new(evt.ModulePath, evt.LoadAddress, evt.Size));
+                    _nativeModules.Add(new(evt.ModulePath, evt.Uuid));
+                    _nativeModuleAddressRanges.Add(new(evt.LoadAddress, evt.LoadAddress + evt.Size, index));
                 }
                 else
                 {
-                    _modules[index] = new(evt.ModulePath, evt.LoadAddress, evt.Size);
+                    _nativeModuleAddressRanges[index] = new(evt.LoadAddress, evt.LoadAddress + evt.Size, index);
                 }
 
-                _sortedModules.Clear();
-                _sortedModules.AddRange(_modules);
-
-                // Always keep the list sorted
-                _sortedModules.Sort(static (left, right) => left.Address.CompareTo(right.Address));
+                // Always keep the list sorted because we resolve the address to the module while parsing the native callstacks
+                CollectionsMarshal.AsSpan(_nativeModuleAddressRanges).SortByRef(new AddressRangeComparer());
             }
         }
 
@@ -133,17 +134,18 @@ internal class UltraEventPipeProcessor
     
     private void PrintCallStack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
-        var sortedModules = CollectionsMarshal.AsSpan(this._sortedModules);
+        var sortedNativeModuleAddressRanges = CollectionsMarshal.AsSpan(this._sortedNativeModuleAddressRanges);
         Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
         var span = callstackTraceEvent.FrameAddresses;
         for (var i = 0; i < span.Length; i++)
         {
             var frame = span[i];
-            var moduleIndex = FindModuleIndex(sortedModules, frame);
-            if (moduleIndex != -1)
+            var addressRangeIndex = FindAddressRange(sortedNativeModuleAddressRanges, frame);
+            if (addressRangeIndex != -1)
             {
-                var module = sortedModules[moduleIndex];
-                Console.WriteLine($"  {module.ModulePath}+0x{frame - module.Address:X} (Module: 0x{module.Address:X} Address: 0x{frame:X})");
+                var addressRange = sortedNativeModuleAddressRanges[addressRangeIndex];
+                var module = _nativeModules[addressRange.Index];
+                Console.WriteLine($"  {module.ModulePath}+0x{frame - addressRange.BeginAddress:X} (Module: 0x{addressRange.BeginAddress:X} Address: 0x{frame:X})");
             }
             else
             {
@@ -152,17 +154,15 @@ internal class UltraEventPipeProcessor
         }
     }
 
-    private static int FindModuleIndex(Span<ModuleAddress> modules, ulong address)
+    private static int FindAddressRange(Span<AddressRange> modules, ulong address)
     {
-        for (var i = 0; i < modules.Length; i++)
-        {
-            if (address >= modules[i].Address && address < modules[i].Address + modules[i].Size)
-            {
-                return i;
-            }
-        }
+        if (modules.Length == 0) return -1;
 
-        return -1;
+        var comparer = new ModuleAddressComparer(address);
+        int index = modules.BinarySearch(comparer);
+        if (index < 0) return -1;
+
+        return modules[index].Contains(address) ? index : -1;
     }
 
     public void Run()
@@ -174,6 +174,26 @@ internal class UltraEventPipeProcessor
         _samplerEventSource.Process();
     }
 
+    private record struct AddressRange(ulong BeginAddress, ulong EndAddress, int Index)
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool Contains(ulong address) => address >= BeginAddress && address < EndAddress;
+    }
 
-    private record struct ModuleAddress(string ModulePath, ulong Address, ulong Size);
+    private record struct NativeModule(string ModulePath, Guid Uuid);
+    
+    private readonly record struct ModuleAddressComparer(ulong Address) : IComparable<AddressRange>
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int CompareTo(AddressRange other)
+        {
+            return other.Contains(Address) ? 0 : Address.CompareTo(other.BeginAddress);
+        }
+    }
+
+    private readonly record struct AddressRangeComparer : IComparerByRef<AddressRange>
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool LessThan(in AddressRange left, in AddressRange right) => left.BeginAddress < right.BeginAddress;
+    }
 }
