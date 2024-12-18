@@ -120,8 +120,11 @@ internal class UltraEventPipeProcessor
                     _nativeModuleAddressRanges[index] = new(evt.LoadAddress, evt.LoadAddress + evt.Size, index);
                 }
 
+                _sortedNativeModuleAddressRanges.Clear();
+                _sortedNativeModuleAddressRanges.AddRange(_nativeModuleAddressRanges);
+
                 // Always keep the list sorted because we resolve the address to the module while parsing the native callstacks
-                CollectionsMarshal.AsSpan(_nativeModuleAddressRanges).SortByRef(new AddressRangeComparer());
+                CollectionsMarshal.AsSpan(_sortedNativeModuleAddressRanges).SortByRef(new AddressRangeComparer());
             }
         }
 
@@ -141,7 +144,7 @@ internal class UltraEventPipeProcessor
         {
             var frame = span[i];
             var addressRangeIndex = FindAddressRange(sortedNativeModuleAddressRanges, frame);
-            if (addressRangeIndex != -1)
+            if (addressRangeIndex >= 0)
             {
                 var addressRange = sortedNativeModuleAddressRanges[addressRangeIndex];
                 var module = _nativeModules[addressRange.Index];
@@ -154,15 +157,11 @@ internal class UltraEventPipeProcessor
         }
     }
 
-    private static int FindAddressRange(Span<AddressRange> modules, ulong address)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int FindAddressRange(Span<AddressRange> ranges, ulong address)
     {
-        if (modules.Length == 0) return -1;
-
         var comparer = new ModuleAddressComparer(address);
-        int index = modules.BinarySearch(comparer);
-        if (index < 0) return -1;
-
-        return modules[index].Contains(address) ? index : -1;
+        return ranges.BinarySearch(comparer);
     }
 
     public void Run()
@@ -174,13 +173,13 @@ internal class UltraEventPipeProcessor
         _samplerEventSource.Process();
     }
 
-    private record struct AddressRange(ulong BeginAddress, ulong EndAddress, int Index)
+    private readonly record struct AddressRange(ulong BeginAddress, ulong EndAddress, int Index)
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Contains(ulong address) => address >= BeginAddress && address < EndAddress;
     }
 
-    private record struct NativeModule(string ModulePath, Guid Uuid);
+    private readonly record struct NativeModule(string ModulePath, Guid Uuid);
     
     private readonly record struct ModuleAddressComparer(ulong Address) : IComparable<AddressRange>
     {
