@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Ultra.Core.Model;
-using Ultra.Sampler;
 using XenoAtom.Collections;
 
 namespace Ultra.Core;
@@ -23,7 +22,7 @@ internal class UltraEventPipeProcessor
     private readonly UTraceProcess _process = new();
     private readonly UTraceModuleList _modules;
     private readonly UTraceManagedMethodList _managedMethods;
-    private UnsafeDictionary<ulong, ThreadSamplingState> _threadSamplingStates = new();
+    private UnsafeDictionary<ulong, ThreadSamplerState> _threadSamplingStates = new();
     
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
@@ -123,7 +122,7 @@ internal class UltraEventPipeProcessor
             // Sort the native offsets in ascending order (for binary search)
             // (Unclear why it would come not sorted, but it seems that TraceLog is still sorting them just in case)
             var span = ilToNativeOffsets.AsSpan();
-            span.SortByRef(new UNativeOffsetComparer());
+            span.SortByRef(new UNativeILOffsetComparer());
         }
     }
 
@@ -144,14 +143,16 @@ internal class UltraEventPipeProcessor
     {
         if (evt.ModulePath is not null)
         {
+            var module = _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
+
             if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
             {
-                // TODO: support undo
+                // TODO: how to support remove?
                 //_mapModuleNameToIndex.Remove(evt.ModulePath);
+                module.ModuleFile.UnloadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
             }
             else
             {
-                var module = _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
                 module.ModuleFile.SymbolUuid = evt.Uuid;
                 module.ModuleFile.LoadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
             }
@@ -204,7 +205,7 @@ internal class UltraEventPipeProcessor
         return _process;
     }
 
-    private ThreadSamplingState GetThreadSamplingState(ulong threadID)
+    private ThreadSamplerState GetThreadSamplingState(ulong threadID)
     {
         if (!_threadSamplingStates.TryGetValue(threadID, out var threadSamplingState))
         {
@@ -215,13 +216,13 @@ internal class UltraEventPipeProcessor
         return threadSamplingState;
     }
 
-    private class ThreadSamplingState
+    private class ThreadSamplerState
     {
         private readonly UCodeAddressIndex[] _previousFrame = new UCodeAddressIndex[63]; // 64 - 1 as in the sampler, the first index is used for the count
         private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
         private readonly UTraceThread _thread;
 
-        public ThreadSamplingState(UTraceThread thread)
+        public ThreadSamplerState(UTraceThread thread)
         {
             _thread = thread;
         }

@@ -20,6 +20,7 @@ internal static class DiagnosticsClientHelper
     /// <summary>
     /// Wait for an available diagnostic endpoint to the runtime instance.
     /// </summary>
+    /// <param name="client">The <see cref="DiagnosticsClient"/> instance.</param>
     /// <param name="timeout">The amount of time to wait before cancelling the wait for the connection.</param>
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = nameof(WaitForConnection))]
     public static extern void WaitForConnection(this DiagnosticsClient client, TimeSpan timeout);
@@ -27,6 +28,7 @@ internal static class DiagnosticsClientHelper
     /// <summary>
     /// Wait for an available diagnostic endpoint to the runtime instance.
     /// </summary>
+    /// <param name="client">The <see cref="DiagnosticsClient"/> instance.</param>
     /// <param name="token">The token to monitor for cancellation requests.</param>
     /// <returns>
     /// A task the completes when a diagnostic endpoint to the runtime instance becomes available.
