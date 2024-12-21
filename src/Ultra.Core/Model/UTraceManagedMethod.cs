@@ -9,7 +9,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a managed method in a traced process.
 /// </summary>
-public record UTraceManagedMethod(int ThreadID, long ModuleID, long MethodID, string MethodNamespace, string MethodName, string MethodSignature, int MethodToken, MethodFlags MethodFlags, UAddress MethodStartAddress, USize MethodSize) : UTraceMethod(CreateFullName(MethodNamespace, MethodName), MethodStartAddress, MethodSize)
+public sealed record UTraceManagedMethod(int ThreadID, long ModuleID, long MethodID, string MethodNamespace, string MethodName, string MethodSignature, int MethodToken, MethodFlags MethodFlags, UAddress MethodStartAddress, USize MethodSize) : UTraceMethod(CreateFullName(MethodNamespace, MethodName), MethodStartAddress, MethodSize)
 {
     /// <summary>
     /// Gets or sets the native IL offsets for the method.

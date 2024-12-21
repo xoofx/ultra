@@ -7,10 +7,10 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a managed module in the traced process.
 /// </summary>
-public record UTraceManagedModule(long ModuleID, long AssemblyId, UTraceModuleFile ModuleFile, UAddress BaseAddress, USize CodeSize) : UTraceLoadedModule(ModuleFile, BaseAddress, CodeSize)
+public sealed record UTraceManagedModule(long ModuleID, long AssemblyId, UTraceModuleFile ModuleFile) : UTraceModule(ModuleFile)
 {
     /// <summary>
     /// Gets or sets the native module if available.
     /// </summary>
-    public UTraceLoadedModule? NativeModule { get; set; }
+    public UTraceNativeModule? NativeModule { get; set; }
 }

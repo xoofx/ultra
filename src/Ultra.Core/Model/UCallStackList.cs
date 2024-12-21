@@ -9,7 +9,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a list of <see cref="UCallStackFrame"/> instances.
 /// </summary>
-public class UCallStackList : UGenericList<UCallStackFrame>
+public sealed class UCallStackList : UGenericList<UCallStackFrame>
 {
     private UnsafeDictionary<UCallStackFrame, UCallStackIndex> _uniqueStacks = new(65536);
 

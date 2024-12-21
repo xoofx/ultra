@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a module file that is loaded in the traced process.
 /// </summary>
-public record UTraceModuleFile(string FilePath)
+public sealed record UTraceModuleFile(string FilePath)
 {
     /// <summary>
     /// Gets or sets the module file index.
@@ -23,14 +23,4 @@ public record UTraceModuleFile(string FilePath)
     /// Gets or sets the symbol file path for the module.
     /// </summary>
     public string? SymbolFilePath { get; set; }
-
-    /// <summary>
-    /// Gets or sets the load time of the module. Time is relative to the start of the session.
-    /// </summary>
-    public UTimeSpan LoadTime { get; set; }
-
-    /// <summary>
-    /// Gets or sets the unload time of the module. Time is relative to the start of the session.
-    /// </summary>
-    public UTimeSpan UnloadTime { get; set; }
 }

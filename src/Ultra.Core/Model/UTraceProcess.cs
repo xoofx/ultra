@@ -11,7 +11,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a process being traced.
 /// </summary>
-public class UTraceProcess
+public sealed class UTraceProcess
 {
     /// <summary>
     /// Gets or sets the process ID.

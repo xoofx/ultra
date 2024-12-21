@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a garbage collection heap stats event marker payload for Firefox Profiler.
 /// </summary>
-public record GCHeapStatsTraceMarker : UTraceMarker
+public sealed record GCHeapStatsTraceMarker : UTraceMarker
 {
     /// <summary>
     /// Gets or sets the total heap size.

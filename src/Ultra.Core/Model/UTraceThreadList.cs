@@ -10,7 +10,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a list of <see cref="UTraceThread"/> instances.
 /// </summary>
-public class UTraceThreadList : UGenericList<UTraceThread>
+public sealed class UTraceThreadList : UGenericList<UTraceThread>
 {
     private readonly Dictionary<ulong, int> _mapThreadIDToIndex = new();
 

@@ -8,9 +8,9 @@ using XenoAtom.Collections;
 namespace Ultra.Core.Model;
 
 /// <summary>
-/// Represents a list of <see cref="UTraceLoadedModule"/> instances.
+/// Represents a list of <see cref="UTraceModule"/> instances.
 /// </summary>
-public class UTraceModuleList : UGenericList<UTraceLoadedModule>
+public sealed class UTraceModuleList : UGenericList<UTraceModule>
 {
     private UnsafeDictionary<string, UTraceModuleFileIndex> _mapModulePathToIndex = new();
     private UnsafeList<UTraceModuleFile> _moduleFiles = new();
@@ -64,19 +64,19 @@ public class UTraceModuleList : UGenericList<UTraceLoadedModule>
     /// <summary>
     /// Gets or creates a loaded module based on the file path, base address, and code size.
     /// </summary>
-    /// <param name="filePath">The file path of the module.</param>
     /// <param name="baseAddress">The base address of the module.</param>
     /// <param name="codeSize">The size of the code.</param>
-    /// <returns>The <see cref="UTraceLoadedModule"/> instance.</returns>
-    public UTraceLoadedModule GetOrCreateLoadedModule(string filePath, UAddress baseAddress, USize codeSize)
+    /// <param name="moduleFilePath">The file path of the module.</param>
+    /// <returns>The <see cref="UTraceModule"/> instance.</returns>
+    public UTraceModule GetOrCreateNativeModule(UAddress baseAddress, USize codeSize, string moduleFilePath)
     {
         if (_mapModuleAddressToLoadedModule.TryGetValue(baseAddress, out var loadedModuleIndex))
         {
             return List[loadedModuleIndex];
         }
 
-        var moduleFile = GetOrCreateModuleFile(filePath);
-        var loadedModule = new UTraceLoadedModule(moduleFile, baseAddress, codeSize);
+        var moduleFile = GetOrCreateModuleFile(moduleFilePath);
+        var loadedModule = new UTraceNativeModule(moduleFile, baseAddress, codeSize);
         loadedModuleIndex = List.Count;
         _mapModuleAddressToLoadedModule.Add(baseAddress, loadedModuleIndex);
         List.Add(loadedModule);
@@ -93,14 +93,14 @@ public class UTraceModuleList : UGenericList<UTraceLoadedModule>
     /// <param name="address">The address of the module.</param>
     /// <param name="module">The module found, if any.</param>
     /// <returns>True if the module was found, otherwise false.</returns>
-    public bool TryFindModuleByAddress(UAddress address, [NotNullWhen(true)] out UTraceLoadedModule? module)
+    public bool TryFindNativeModuleByAddress(UAddress address, [NotNullWhen(true)] out UTraceNativeModule? module)
     {
         var ranges = _loadedModuleAddressRanges.AsSpan();
         var comparer = new UAddressRangeFinder(address);
         var index = ranges.BinarySearch(comparer);
         if (index >= 0)
         {
-            module = List[ranges[index].Index];
+            module = (UTraceNativeModule)List[ranges[index].Index];
             return true;
         }
         module = null;
@@ -112,18 +112,16 @@ public class UTraceModuleList : UGenericList<UTraceLoadedModule>
     /// </summary>
     /// <param name="moduleID">The module ID.</param>
     /// <param name="assemblyId">The assembly ID.</param>
-    /// <param name="filePath">The file path of the module.</param>
-    /// <param name="baseAddress">The base address of the module.</param>
-    /// <param name="codeSize">The size of the module.</param>
+    /// <param name="moduleFilePath">The file path of the module.</param>
     /// <returns>The <see cref="UTraceManagedModule"/> instance.</returns>
-    public UTraceManagedModule GetOrCreateManagedModule(long moduleID, long assemblyId, string filePath, UAddress baseAddress, USize codeSize)
+    public UTraceManagedModule GetOrCreateManagedModule(long moduleID, long assemblyId, string moduleFilePath)
     {
         if (_mapModuleIDToManagedModule.TryGetValue(moduleID, out var managedModuleIndex))
         {
             return (UTraceManagedModule)List[managedModuleIndex];
         }
-        var moduleFile = GetOrCreateModuleFile(filePath);
-        var managedModule = new UTraceManagedModule(moduleID, assemblyId, moduleFile, baseAddress, codeSize);
+        var moduleFile = GetOrCreateModuleFile(moduleFilePath);
+        var managedModule = new UTraceManagedModule(moduleID, assemblyId, moduleFile);
         _mapModuleIDToManagedModule.Add(moduleID, List.Count);
         List.Add(managedModule);
         return managedModule;

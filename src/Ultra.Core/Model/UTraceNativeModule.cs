@@ -7,4 +7,4 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a loaded module in the traced process.
 /// </summary>
-public record UTraceLoadedModule(UTraceModuleFile ModuleFile, UAddress BaseAddress, USize CodeSize);
+public sealed record UTraceNativeModule(UTraceModuleFile ModuleFile, UAddress BaseAddress, USize CodeSize) : UTraceModule(ModuleFile);

@@ -11,7 +11,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a list of <see cref="UTraceManagedMethod"/> instances.
 /// </summary>
-public class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
+public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
 {
     private UnsafeDictionary<UAddress, int> _mapMethodAddressToMethodIndex = new();
     private UnsafeDictionary<long, int> _mapManagedMethodIDToMethodIndex = new();

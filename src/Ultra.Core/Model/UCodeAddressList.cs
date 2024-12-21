@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a list of <see cref="UAddress"/> each associated with a unique <see cref="UCodeAddressIndex"/>.
 /// </summary>
-public class UCodeAddressList : UGenericList<UAddress>
+public sealed class UCodeAddressList : UGenericList<UAddress>
 {
     private readonly Dictionary<UAddress, UCodeAddressIndex> _mapAddressToIndex = new();
 

@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents an event that marks the suspension of the execution engine by the garbage collector.
 /// </summary>
-public record GCSuspendExecutionEngineTraceMarker : UTraceMarker
+public sealed record GCSuspendExecutionEngineTraceMarker : UTraceMarker
 {
     /// <summary>
     /// Gets or sets the reason for the suspension.

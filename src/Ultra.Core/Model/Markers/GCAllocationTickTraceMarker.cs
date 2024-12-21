@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a garbage collection allocation tick profile marker.
 /// </summary>
-public record GCAllocationTickTraceMarker : UTraceMarker
+public sealed record GCAllocationTickTraceMarker : UTraceMarker
 {
     /// <summary>
     /// Gets or sets the amount of memory allocated.

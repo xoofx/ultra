@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a garbage collection event marker payload for Firefox Profiler.
 /// </summary>
-public record GCTraceMarker : UTraceMarker
+public sealed record GCTraceMarker : UTraceMarker
 {
     /// <summary>
     /// Gets or sets the reason for the garbage collection.

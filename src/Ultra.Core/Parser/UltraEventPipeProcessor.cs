@@ -137,24 +137,40 @@ internal class UltraEventPipeProcessor
 
     private void ProcessModuleLoadUnload(ModuleLoadUnloadTraceData data, bool isLoad, bool isDCStartStop)
     {
+        var module = _modules.GetOrCreateManagedModule(data.ModuleID, data.AssemblyID, data.ModuleILPath);
+
+        module.ModuleFile.SymbolUuid = data.ManagedPdbSignature;
+        module.ModuleFile.SymbolFilePath = data.ManagedPdbBuildPath;
+
+        if (!isDCStartStop)
+        {
+            if (isLoad)
+            {
+                module.LoadTime = UTimeSpan.FromMilliseconds(data.TimeStampRelativeMSec);
+            }
+            else
+            {
+                module.UnloadTime = UTimeSpan.FromMilliseconds(data.TimeStampRelativeMSec);
+            }
+        }
     }
     
     private void SamplerParserOnEventNativeModule(UltraNativeModuleTraceEvent evt)
     {
         if (evt.ModulePath is not null)
         {
-            var module = _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
+            var module = _modules.GetOrCreateNativeModule(evt.LoadAddress, evt.Size, evt.ModulePath);
 
             if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
             {
                 // TODO: how to support remove?
                 //_mapModuleNameToIndex.Remove(evt.ModulePath);
-                module.ModuleFile.UnloadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
+                module.UnloadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
             }
             else
             {
                 module.ModuleFile.SymbolUuid = evt.Uuid;
-                module.ModuleFile.LoadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
+                module.LoadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
             }
         }
 
@@ -192,7 +208,7 @@ internal class UltraEventPipeProcessor
         //}
     }
 
-    public UTraceProcess Run()
+    public UTraceSession Run()
     {
         // Run CLR if available
         _clrEventSource?.Process();
@@ -201,8 +217,16 @@ internal class UltraEventPipeProcessor
 
         // Run sampler before CLR
         _samplerEventSource.Process();
-        
-        return _process;
+
+        var session = new UTraceSession();
+        session.Processes.Add(_process);
+
+        session.NumberOfProcessors = _samplerEventSource.NumberOfProcessors;
+        session.StartTime = _samplerEventSource.SessionStartTime;
+        session.Duration = _samplerEventSource.SessionDuration;
+        session.CpuSpeedMHz = _samplerEventSource.CpuSpeedMHz;
+
+        return session;
     }
 
     private ThreadSamplerState GetThreadSamplingState(ulong threadID)

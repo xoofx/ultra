@@ -7,4 +7,4 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents an event that indicates the .NET garbage collector has restarted the execution engine.
 /// </summary>
-public record GCRestartExecutionEngineTraceMarker : UTraceMarker;
+public sealed record GCRestartExecutionEngineTraceMarker : UTraceMarker;

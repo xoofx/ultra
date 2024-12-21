@@ -9,7 +9,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a thread in a traced process.
 /// </summary>
-public record UTraceThread(ulong ThreadID)
+public sealed record UTraceThread(ulong ThreadID)
 {
     private UnsafeList<UTraceSample> _samples = new(1024);
 

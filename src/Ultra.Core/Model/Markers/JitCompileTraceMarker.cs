@@ -7,7 +7,7 @@ namespace Ultra.Core.Model;
 /// <summary>
 /// Represents a JIT compile event marker payload for the Firefox Profiler.
 /// </summary>
-public record JitCompileTraceMarker : UTraceMarker
+public sealed record JitCompileTraceMarker : UTraceMarker
 {
     /// <summary>
     /// Gets or sets the full name of the method.
