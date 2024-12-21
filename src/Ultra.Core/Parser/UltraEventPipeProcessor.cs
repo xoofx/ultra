@@ -2,11 +2,10 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Numerics;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
-using System.Reflection;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
+using Ultra.Core.Model;
 using XenoAtom.Collections;
 
 namespace Ultra.Core;
@@ -19,22 +18,26 @@ internal class UltraEventPipeProcessor
     private readonly EventPipeEventSource _samplerEventSource;
     private readonly UltraSamplerParser _samplerParser;
 
+    private readonly UTraceProcess _process = new();
+    private readonly UTraceModuleList _modules;
+    private readonly UTraceManagedMethodList _managedMethods;
+
+
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
-    private readonly Dictionary<string, int> _mapModuleNameToIndex = new ();
-    private readonly List<NativeModule> _nativeModules = new();
-    private readonly List<AddressRange> _nativeModuleAddressRanges = new();
-    private readonly List<AddressRange> _sortedNativeModuleAddressRanges = new();
 
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource)
     {
         _samplerEventSource = samplerEventSource;
+        _modules = _process.Modules;
+        _managedMethods = _process.ManagedMethods;
 
         _samplerParser = new UltraSamplerParser(samplerEventSource);
-
+        
         // NativeCallstack and NativeModule
         _samplerParser.EventNativeCallstack += SamplerParserOnEventNativeCallstack;
         _samplerParser.EventNativeModule += SamplerParserOnEventNativeModule;
+
     }
 
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource, EventPipeEventSource clrEventSource) : this(samplerEventSource)
@@ -71,9 +74,9 @@ internal class UltraEventPipeProcessor
         _clrRundownTraceEventParser.MethodDCStartVerbose += ProcessMethodLoadVerbose;
 
         // MethodUnload
-        _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodUnloadVerbose;
-        _clrEventSource.Clr.MethodDCStopVerboseV2 += ProcessMethodUnloadVerbose;
-        _clrRundownTraceEventParser.MethodDCStopVerbose += ProcessMethodUnloadVerbose;
+        _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodLoadVerbose;
+        _clrEventSource.Clr.MethodDCStopVerboseV2 += ProcessMethodLoadVerbose;
+        _clrRundownTraceEventParser.MethodDCStopVerbose += ProcessMethodLoadVerbose;
 
         // MethodILToNativeMapTraceData
         _clrEventSource.Clr.MethodILToNativeMap += ProcessMethodILToNativeMap;
@@ -82,14 +85,53 @@ internal class UltraEventPipeProcessor
 
     private void ProcessMethodILToNativeMap(MethodILToNativeMapTraceData obj)
     {
+        if (!_managedMethods.TryFindMethodById(obj.MethodID, out var method))
+        {
+            return;
+
+        }
+
+        int validOffsets = 0;
+        for (var i = 0; i < obj.CountOfMapEntries; i++)
+        {
+            if (obj.ILOffset(i) >= 0) validOffsets++;
+        }
+
+        if (validOffsets <= 0)
+        {
+            return;
+        }
+
+        var ilToNativeOffsets = new UNativeILOffset[validOffsets];
+        int validOffsetIndex = 0;
+        for (var i = 0; i < obj.CountOfMapEntries; i++)
+        {
+            if (obj.ILOffset(i) >= 0)
+            {
+                ilToNativeOffsets[validOffsetIndex] = new UNativeILOffset(obj.ILOffset(i), obj.NativeOffset(i));
+                validOffsetIndex++;
+            }
+        }
+
+        method.ILToNativeILOffsets = ilToNativeOffsets;
+
+        // Sort if we have more than one valid offsets
+        if (validOffsets > 1)
+        {
+            // Sort the native offsets in ascending order (for binary search)
+            // (Unclear why it would come not sorted, but it seems that TraceLog is still sorting them just in case)
+            var span = ilToNativeOffsets.AsSpan();
+            span.SortByRef(new UNativeOffsetComparer());
+        }
     }
 
     private void ProcessMethodUnloadVerbose(MethodLoadUnloadVerboseTraceData obj)
     {
     }
 
-    private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData obj)
+    private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
+        _managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize);
     }
 
     private void ProcessModuleLoadUnload(ModuleLoadUnloadTraceData data, bool isLoad, bool isDCStartStop)
@@ -100,31 +142,14 @@ internal class UltraEventPipeProcessor
     {
         if (evt.ModulePath is not null)
         {
-            Console.WriteLine($"Module {evt.NativeModuleEventKind} Path: {evt.ModulePath}, LoadAddress: 0x{evt.LoadAddress:X}, Size: 0x{evt.Size:X}, Timestamp: {evt.TimestampUtc}, Uuid: {evt.Uuid}");
-
             if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
             {
-                _mapModuleNameToIndex.Remove(evt.ModulePath);
+                // TODO: support undo
+                //_mapModuleNameToIndex.Remove(evt.ModulePath);
             }
             else
             {
-                if (!_mapModuleNameToIndex.TryGetValue(evt.ModulePath, out var index))
-                {
-                    index = _nativeModules.Count;
-                    _mapModuleNameToIndex.Add(evt.ModulePath, index);
-                    _nativeModules.Add(new(evt.ModulePath, evt.Uuid));
-                    _nativeModuleAddressRanges.Add(new(evt.LoadAddress, evt.LoadAddress + evt.Size, index));
-                }
-                else
-                {
-                    _nativeModuleAddressRanges[index] = new(evt.LoadAddress, evt.LoadAddress + evt.Size, index);
-                }
-
-                _sortedNativeModuleAddressRanges.Clear();
-                _sortedNativeModuleAddressRanges.AddRange(_nativeModuleAddressRanges);
-
-                // Always keep the list sorted because we resolve the address to the module while parsing the native callstacks
-                CollectionsMarshal.AsSpan(_sortedNativeModuleAddressRanges).SortByRef(new AddressRangeComparer());
+                _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
             }
         }
 
@@ -137,31 +162,28 @@ internal class UltraEventPipeProcessor
     
     private void PrintCallStack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
-        var sortedNativeModuleAddressRanges = CollectionsMarshal.AsSpan(this._sortedNativeModuleAddressRanges);
         Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
+
         var span = callstackTraceEvent.FrameAddresses;
         for (var i = 0; i < span.Length; i++)
         {
-            var frame = span[i];
-            var addressRangeIndex = FindAddressRange(sortedNativeModuleAddressRanges, frame);
-            if (addressRangeIndex >= 0)
+            var frame = (UAddress)span[i];
+            if (_modules.TryFindModuleByAddress(frame, out var module))
             {
-                var addressRange = sortedNativeModuleAddressRanges[addressRangeIndex];
-                var module = _nativeModules[addressRange.Index];
-                Console.WriteLine($"  {module.ModulePath}+0x{frame - addressRange.BeginAddress:X} (Module: 0x{addressRange.BeginAddress:X} Address: 0x{frame:X})");
+                Console.WriteLine($"  {module.ModuleFile.FilePath}+{frame - module.BaseAddress} (Module: {module.BaseAddress} Address: {frame})");
             }
             else
             {
-                Console.WriteLine($"  0x{frame:X}");
+                if (_managedMethods.TryFindMethodByAddress(frame, out var method))
+                {
+                    Console.WriteLine($"  {method.MethodNamespace}.{method.MethodName}+{frame - method.MethodStartAddress} (Method: {method.MethodStartAddress} Address: {frame})");
+                }
+                else
+                {
+                    Console.WriteLine($"  {frame}");
+                }
             }
         }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int FindAddressRange(Span<AddressRange> ranges, ulong address)
-    {
-        var comparer = new ModuleAddressComparer(address);
-        return ranges.BinarySearch(comparer);
     }
 
     public void Run()
@@ -169,30 +191,10 @@ internal class UltraEventPipeProcessor
         // Run CLR if available
         _clrEventSource?.Process();
 
+        _managedMethods.SortMethodAddressRanges();
+
         // Run sampler before CLR
         _samplerEventSource.Process();
     }
 
-    private readonly record struct AddressRange(ulong BeginAddress, ulong EndAddress, int Index)
-    {
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Contains(ulong address) => address >= BeginAddress && address < EndAddress;
-    }
-
-    private readonly record struct NativeModule(string ModulePath, Guid Uuid);
-    
-    private readonly record struct ModuleAddressComparer(ulong Address) : IComparable<AddressRange>
-    {
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int CompareTo(AddressRange other)
-        {
-            return other.Contains(Address) ? 0 : Address.CompareTo(other.BeginAddress);
-        }
-    }
-
-    private readonly record struct AddressRangeComparer : IComparerByRef<AddressRange>
-    {
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool LessThan(in AddressRange left, in AddressRange right) => left.BeginAddress < right.BeginAddress;
-    }
 }
