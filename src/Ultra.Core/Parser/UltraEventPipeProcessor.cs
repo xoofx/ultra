@@ -3,9 +3,11 @@
 // See license.txt file in the project root for full license information.
 
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Ultra.Core.Model;
+using Ultra.Sampler;
 using XenoAtom.Collections;
 
 namespace Ultra.Core;
@@ -21,8 +23,8 @@ internal class UltraEventPipeProcessor
     private readonly UTraceProcess _process = new();
     private readonly UTraceModuleList _modules;
     private readonly UTraceManagedMethodList _managedMethods;
-
-
+    private UnsafeDictionary<ulong, ThreadSamplingState> _threadSamplingStates = new();
+    
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
 
@@ -149,7 +151,9 @@ internal class UltraEventPipeProcessor
             }
             else
             {
-                _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
+                var module = _modules.GetOrCreateLoadedModule(evt.ModulePath, evt.LoadAddress, evt.Size);
+                module.ModuleFile.SymbolUuid = evt.Uuid;
+                module.ModuleFile.LoadTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
             }
         }
 
@@ -162,31 +166,32 @@ internal class UltraEventPipeProcessor
     
     private void PrintCallStack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
-        Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
+        GetThreadSamplingState(callstackTraceEvent.FrameThreadId).RecordStack(_process, callstackTraceEvent);
+        //Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
 
-        var span = callstackTraceEvent.FrameAddresses;
-        for (var i = 0; i < span.Length; i++)
-        {
-            var frame = (UAddress)span[i];
-            if (_modules.TryFindModuleByAddress(frame, out var module))
-            {
-                Console.WriteLine($"  {module.ModuleFile.FilePath}+{frame - module.BaseAddress} (Module: {module.BaseAddress} Address: {frame})");
-            }
-            else
-            {
-                if (_managedMethods.TryFindMethodByAddress(frame, out var method))
-                {
-                    Console.WriteLine($"  {method.MethodNamespace}.{method.MethodName}+{frame - method.MethodStartAddress} (Method: {method.MethodStartAddress} Address: {frame})");
-                }
-                else
-                {
-                    Console.WriteLine($"  {frame}");
-                }
-            }
-        }
+        //var span = callstackTraceEvent.FrameAddresses;
+        //for (var i = 0; i < span.Length; i++)
+        //{
+        //    var frame = (UAddress)span[i];
+        //    if (_modules.TryFindModuleByAddress(frame, out var module))
+        //    {
+        //        Console.WriteLine($"  {module.ModuleFile.FilePath}+{frame - module.BaseAddress} (Module: {module.BaseAddress} Address: {frame})");
+        //    }
+        //    else
+        //    {
+        //        if (_managedMethods.TryFindMethodByAddress(frame, out var method))
+        //        {
+        //            Console.WriteLine($"  {method.MethodNamespace}.{method.MethodName}+{frame - method.MethodStartAddress} (Method: {method.MethodStartAddress} Address: {frame})");
+        //        }
+        //        else
+        //        {
+        //            Console.WriteLine($"  {frame}");
+        //        }
+        //    }
+        //}
     }
 
-    public void Run()
+    public UTraceProcess Run()
     {
         // Run CLR if available
         _clrEventSource?.Process();
@@ -195,6 +200,73 @@ internal class UltraEventPipeProcessor
 
         // Run sampler before CLR
         _samplerEventSource.Process();
+        
+        return _process;
     }
 
+    private ThreadSamplingState GetThreadSamplingState(ulong threadID)
+    {
+        if (!_threadSamplingStates.TryGetValue(threadID, out var threadSamplingState))
+        {
+            var thread = _process.Threads.GetOrCreateThread(threadID);
+            threadSamplingState = new(thread);
+            _threadSamplingStates.Add(threadID, threadSamplingState);
+        }
+        return threadSamplingState;
+    }
+
+    private class ThreadSamplingState
+    {
+        private readonly UCodeAddressIndex[] _previousFrame = new UCodeAddressIndex[63]; // 64 - 1 as in the sampler, the first index is used for the count
+        private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
+        private readonly UTraceThread _thread;
+
+        public ThreadSamplingState(UTraceThread thread)
+        {
+            _thread = thread;
+        }
+        
+        public void RecordStack(UTraceProcess process, UltraNativeCallstackTraceEvent evt)
+        {
+            _callStack.Clear();
+            var newFrameAddresses = evt.FrameAddresses;
+            var callStackCount = evt.PreviousFrameCount + newFrameAddresses.Length;
+            if (callStackCount == 0) return;
+            _callStack.UnsafeSetCount(callStackCount);
+
+            ref var callStackIt = ref _callStack.UnsafeGetRefAt(0);
+
+            var codeAddresses = process.CodeAddresses;
+            foreach (var address in newFrameAddresses)
+            {
+                var frame = (UAddress)address;
+                var codeAddressIndex = codeAddresses.GetOrCreateAddress(frame);
+                callStackIt = codeAddressIndex;
+                callStackIt = ref Unsafe.Add(ref callStackIt, 1);
+            }
+
+            var previousFrameCount = evt.PreviousFrameCount;
+            if (previousFrameCount > 0)
+            {
+                var previousFrame = _previousFrame;
+                for (var i = 0; i < previousFrameCount; i++)
+                {
+                    callStackIt = previousFrame[i];
+                    callStackIt = ref Unsafe.Add(ref callStackIt, 1);
+                }
+            }
+            
+            // Copy the new frame to the previous frame
+            var callStack = _callStack.AsSpan();
+            var maxLengthToCopy = Math.Min(_previousFrame.Length, callStack.Length);
+            for (var i = 0; i < maxLengthToCopy; i++)
+            {
+                _previousFrame[i] = callStack[callStack.Length - maxLengthToCopy + i];
+            }
+
+            var callStackIndex = process.CallStacks.InsertCallStack(callStack);
+
+            _thread.AddSample(new(callStackIndex, UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec), TimeSpan.Zero)); // TODO: cputime
+        }
+    }
 }
