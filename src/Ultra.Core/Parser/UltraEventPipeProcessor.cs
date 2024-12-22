@@ -290,7 +290,7 @@ internal class UltraEventPipeProcessor
 
             var callStackIndex = process.CallStacks.InsertCallStack(callStack);
 
-            _thread.AddSample(new(callStackIndex, UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec), TimeSpan.Zero)); // TODO: cputime
+            _thread.Samples.Add(new(callStackIndex, UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec), TimeSpan.Zero)); // TODO: cputime
         }
     }
 }

@@ -11,8 +11,6 @@ namespace Ultra.Core.Model;
 /// </summary>
 public sealed record UTraceThread(ulong ThreadID)
 {
-    private UnsafeList<UTraceSample> _samples = new(1024);
-
     /// <summary>
     /// Gets or sets the start time of the thread.
     /// </summary>
@@ -31,21 +29,15 @@ public sealed record UTraceThread(ulong ThreadID)
     /// <summary>
     /// Gets the samples collected for the thread.
     /// </summary>
-    public ReadOnlySpan<UTraceSample> Samples => _samples.AsSpan();
+    public UTraceSampleList Samples { get; } = new();
+
+    /// <summary>
+    /// Gets the markers collected for the thread.
+    /// </summary>
+    public UTraceMarkerList Markers { get; } = new();
 
     /// <summary>
     /// Gets or sets the CPU time for the thread.
     /// </summary>
     public UTimeSpan CpuTime { get; set; }
-
-    /// <summary>
-    /// Clears all collected samples.
-    /// </summary>
-    public void ClearSamples() => _samples.Clear();
-
-    /// <summary>
-    /// Adds a new sample to the thread.
-    /// </summary>
-    /// <param name="sample">The sample to add.</param>
-    public void AddSample(UTraceSample sample) => _samples.Add(sample);
 }
