@@ -31,7 +31,7 @@ internal sealed class UltraNativeThreadStartTraceEvent : TraceEvent
 
     public int ThreadNameSize => GetInt32At(16);
 
-    public unsafe byte* ThreadNamePointer => (byte*)DataStart + 24 + ThreadNameSize;
+    public unsafe byte* ThreadNamePointer => (byte*)DataStart + 20;
     
     public unsafe string ThreadName => Encoding.UTF8.GetString(new ReadOnlySpan<byte>(ThreadNamePointer, ThreadNameSize));
 
