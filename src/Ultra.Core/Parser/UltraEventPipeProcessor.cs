@@ -38,7 +38,8 @@ internal class UltraEventPipeProcessor
         // NativeCallstack and NativeModule
         _samplerParser.EventNativeCallstack += SamplerParserOnEventNativeCallstack;
         _samplerParser.EventNativeModule += SamplerParserOnEventNativeModule;
-
+        _samplerParser.EventNativeThreadStart += SamplerParserOnEventNativeThreadStart;
+        _samplerParser.EventNativeThreadStop += SamplerParserOnEventNativeThreadStop;
     }
 
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource, EventPipeEventSource clrEventSource) : this(samplerEventSource)
@@ -176,36 +177,22 @@ internal class UltraEventPipeProcessor
 
     }
 
-    private void SamplerParserOnEventNativeCallstack(UltraNativeCallstackTraceEvent obj)
-    {
-        PrintCallStack(obj);
-    }
-    
-    private void PrintCallStack(UltraNativeCallstackTraceEvent callstackTraceEvent)
+    private void SamplerParserOnEventNativeCallstack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
         GetThreadSamplingState(callstackTraceEvent.FrameThreadId).RecordStack(_process, callstackTraceEvent);
-        //Console.WriteLine($"Thread: {callstackTraceEvent.FrameThreadId}, State: {callstackTraceEvent.ThreadState}, Cpu: {callstackTraceEvent.ThreadCpuUsage}, SameFrameCount: {callstackTraceEvent.PreviousFrameCount}, FrameCount: {callstackTraceEvent.FrameSize / sizeof(ulong)} ");
+    }
 
-        //var span = callstackTraceEvent.FrameAddresses;
-        //for (var i = 0; i < span.Length; i++)
-        //{
-        //    var frame = (UAddress)span[i];
-        //    if (_modules.TryFindModuleByAddress(frame, out var module))
-        //    {
-        //        Console.WriteLine($"  {module.ModuleFile.FilePath}+{frame - module.BaseAddress} (Module: {module.BaseAddress} Address: {frame})");
-        //    }
-        //    else
-        //    {
-        //        if (_managedMethods.TryFindMethodByAddress(frame, out var method))
-        //        {
-        //            Console.WriteLine($"  {method.MethodNamespace}.{method.MethodName}+{frame - method.MethodStartAddress} (Method: {method.MethodStartAddress} Address: {frame})");
-        //        }
-        //        else
-        //        {
-        //            Console.WriteLine($"  {frame}");
-        //        }
-        //    }
-        //}
+    private void SamplerParserOnEventNativeThreadStart(UltraNativeThreadStartTraceEvent obj)
+    {
+        var thread = GetThreadSamplingState(obj.FrameThreadId).Thread;
+        thread.StartTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
+        thread.Name = obj.ThreadName;
+    }
+
+    private void SamplerParserOnEventNativeThreadStop(UltraNativeThreadStopTraceEvent obj)
+    {
+        var thread = GetThreadSamplingState(obj.FrameThreadId).Thread;
+        thread.StopTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
     }
 
     public UTraceSession Run()
@@ -250,7 +237,9 @@ internal class UltraEventPipeProcessor
         {
             _thread = thread;
         }
-        
+
+        public UTraceThread Thread => _thread;
+
         public void RecordStack(UTraceProcess process, UltraNativeCallstackTraceEvent evt)
         {
             _callStack.Clear();

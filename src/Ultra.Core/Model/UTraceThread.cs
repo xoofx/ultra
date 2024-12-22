@@ -21,12 +21,12 @@ public sealed record UTraceThread(ulong ThreadID)
     /// <summary>
     /// Gets or sets the end time of the thread.
     /// </summary>
-    public UTimeSpan EndTime { get; set; }
+    public UTimeSpan StopTime { get; set; }
 
     /// <summary>
     /// Gets or sets the verbose name for the thread.
     /// </summary>
-    public string VerboseName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets the samples collected for the thread.
