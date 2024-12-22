@@ -16,7 +16,15 @@ public static class UltraSamplerConstants
 
     public const int NativeModuleEventId = 2;
 
+    public const int NativeThreadStartEventId = 3;
+
+    public const int NativeThreadStopEventId = 4;
+
     public const int TaskNativeCallStackEventId = 1;
 
     public const int TaskNativeModuleEventId = 2;
+
+    public const int TaskNativeThreadStartEventId = 3;
+
+    public const int TaskNativeThreadStopEventId = 4;
 }

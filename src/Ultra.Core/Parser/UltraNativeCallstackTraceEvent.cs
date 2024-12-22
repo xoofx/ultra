@@ -11,6 +11,7 @@ internal sealed class UltraNativeCallstackTraceEvent : TraceEvent
 {
     private static readonly string[] _payloadNames =
     [
+        nameof(SamplingId),
         nameof(FrameThreadId),
         nameof(ThreadState),
         nameof(ThreadCpuUsage),
@@ -26,17 +27,21 @@ internal sealed class UltraNativeCallstackTraceEvent : TraceEvent
         _target = target;
     }
 
-    public ulong FrameThreadId => (ulong)GetInt64At(0);
+    public ulong SamplingId => (ulong)GetInt64At(0);
 
-    public UltraSamplerThreadState ThreadState => (UltraSamplerThreadState)GetInt32At(8);
+    public ulong FrameThreadId => (ulong)GetInt64At(8);
 
-    public double ThreadCpuUsage => GetInt32At(12) / 1000.0;
+    public UltraSamplerThreadState ThreadState => (UltraSamplerThreadState)GetInt32At(16);
 
-    public int PreviousFrameCount => GetInt32At(16);
+    public int ThreadCpuUsageAsInt => GetInt32At(20);
+
+    public double ThreadCpuUsage => ThreadCpuUsageAsInt / 1000.0;
+
+    public int PreviousFrameCount => GetInt32At(24);
     
-    public int FrameSize => GetInt32At(20);
+    public int FrameSize => GetInt32At(28);
 
-    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 24, FrameSize / sizeof(ulong));
+    public unsafe ReadOnlySpan<ulong> FrameAddresses => new((byte*)DataStart + 32, FrameSize / sizeof(ulong));
 
     /// <inheritdoc />
 
@@ -45,16 +50,18 @@ internal sealed class UltraNativeCallstackTraceEvent : TraceEvent
         switch (index)
         {
             case 0:
-                return FrameThreadId;
+                return SamplingId;
             case 1:
-                return (int)ThreadState;
+                return FrameThreadId;
             case 2:
-                return GetInt32At(12);
+                return (int)ThreadState;
             case 3:
-                return PreviousFrameCount;
+                return ThreadCpuUsageAsInt;
             case 4:
-                return FrameSize;
+                return PreviousFrameCount;
             case 5:
+                return FrameSize;
+            case 6:
                 return FrameAddresses.ToArray();
             default:
                 throw new ArgumentOutOfRangeException(nameof(index));

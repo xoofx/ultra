@@ -31,7 +31,19 @@ internal sealed class UltraSamplerParser : TraceEventParser
         add => source.RegisterEventTemplate(CreateUltraNativeModuleTraceEvent(value));
         remove => source.UnregisterEventTemplate(value, UltraSamplerConstants.NativeModuleEventId, ProviderGuid);
     }
-    
+
+    public event Action<UltraNativeThreadStartTraceEvent> EventNativeThreadStart
+    {
+        add => source.RegisterEventTemplate(CreateUltraNativeThreadStartTraceEvent(value));
+        remove => source.UnregisterEventTemplate(value, UltraSamplerConstants.NativeThreadStartEventId, ProviderGuid);
+    }
+
+    public event Action<UltraNativeThreadStopTraceEvent> EventNativeThreadStop
+    {
+        add => source.RegisterEventTemplate(CreateUltraNativeThreadStopTraceEvent(value));
+        remove => source.UnregisterEventTemplate(value, UltraSamplerConstants.NativeThreadStopEventId, ProviderGuid);
+    }
+
     /// <inheritdoc />
     protected override string GetProviderName() => UltraSamplerConstants.ProviderName;
 
@@ -44,6 +56,8 @@ internal sealed class UltraSamplerParser : TraceEventParser
             [
                 CreateUltraNativeCallstackTraceEvent(null),
                 CreateUltraNativeModuleTraceEvent(null),
+                CreateUltraNativeThreadStartTraceEvent(null),
+                CreateUltraNativeThreadStopTraceEvent(null)
             ];
         }
 
@@ -57,8 +71,14 @@ internal sealed class UltraSamplerParser : TraceEventParser
     }
 
     private static TraceEvent CreateUltraNativeCallstackTraceEvent(Action<UltraNativeCallstackTraceEvent>? value)
-        => new UltraNativeCallstackTraceEvent(value, UltraSamplerConstants.NativeCallStackEventId, 0, "OnNativeCallStack", Guid.Empty, 0, "OnNativeCallStack", ProviderGuid, ProviderName);
+        => new UltraNativeCallstackTraceEvent(value, UltraSamplerConstants.NativeCallStackEventId, 0, "NativeCallStack", Guid.Empty, 0, "NativeCallStack", ProviderGuid, ProviderName);
 
     private static TraceEvent CreateUltraNativeModuleTraceEvent(Action<UltraNativeModuleTraceEvent>? value)
-        => new UltraNativeModuleTraceEvent(value, UltraSamplerConstants.NativeModuleEventId, 0, "OnNativeModule", Guid.Empty, 0, "OnNativeModule", ProviderGuid, ProviderName);
+        => new UltraNativeModuleTraceEvent(value, UltraSamplerConstants.NativeModuleEventId, 0, "NativeModule", Guid.Empty, 0, "NativeModule", ProviderGuid, ProviderName);
+
+    private static TraceEvent CreateUltraNativeThreadStartTraceEvent(Action<UltraNativeThreadStartTraceEvent>? value)
+        => new UltraNativeThreadStartTraceEvent(value, UltraSamplerConstants.NativeThreadStartEventId, 0, "NativeThreadStart", Guid.Empty, 0, "NativeThreadStart", ProviderGuid, ProviderName);
+
+    private static TraceEvent CreateUltraNativeThreadStopTraceEvent(Action<UltraNativeThreadStopTraceEvent>? value)
+        => new UltraNativeThreadStopTraceEvent(value, UltraSamplerConstants.NativeThreadStopEventId, 0, "NativeThreadStop", Guid.Empty, 0, "NativeThreadStop", ProviderGuid, ProviderName);
 }

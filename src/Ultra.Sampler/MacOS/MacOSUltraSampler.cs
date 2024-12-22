@@ -19,6 +19,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private Thread? _samplerThread;
     private ulong _samplerThreadId;
     private readonly AutoResetEvent _samplerResumeThreadEvent;
+    private ulong _samplingId;
 
     // Frames information
     private const int MaximumFrames = 4096;
@@ -148,7 +149,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Ultra-Sampler unexpected exception while sampling: {ex}");
+            Console.Error.WriteLine($"Ultra-Sampler stopped. Unexpected exception while sampling: {ex}");
         }
     }
 
@@ -354,6 +355,18 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 continue;
             }
 
+            // If thread was not active before, simulate a thread start event with its name
+            if (!_activeThreadIds.Contains(threadInfo.thread_id))
+            {
+                var threadName = new ReadOnlySpan<byte>(threadExtendedInfo.pth_name, 64);
+                var length = threadName.IndexOf((byte)0);
+                if (length < 0)
+                {
+                    length = 64;
+                }
+                _samplerEventSource.NativeThreadStart(_samplingId, threadInfo.thread_id, length, threadExtendedInfo.pth_name);
+            }
+
             // -------------------------------------------------------------------
             // Suspend the thread
             // -------------------------------------------------------------------
@@ -385,7 +398,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             frameCount -= sameFrameCount;
 
             // Long only the delta frames
-            samplingDelegate(threadInfo.thread_id, (int)threadExtendedInfo.pth_run_state, (int)threadExtendedInfo.pth_cpu_usage, sameFrameCount, frameCount * sizeof(ulong), (byte*)pFrames);
+            samplingDelegate(_samplingId, threadInfo.thread_id, (int)threadExtendedInfo.pth_run_state, (int)threadExtendedInfo.pth_cpu_usage, sameFrameCount, frameCount * sizeof(ulong), (byte*)pFrames);
         }
 
         // Cleanup threads that are no longer active
@@ -397,11 +410,16 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                 {
                     _freeCompressedFramesIndices.Add(compressedFrameIndex);
                 }
+
+                _samplerEventSource.NativeThreadStop(_samplingId, threadInfo.thread_id);
             }
         }
 
         // Swap the active and current thread ids
         (_currentThreadIds, _activeThreadIds) = (_activeThreadIds, _currentThreadIds);
+
+        // Increment the sampling id
+        _samplingId++;
     }
 
     private int ComputeSameFrameCount(ulong threadId, int frameCount, ulong* frames)

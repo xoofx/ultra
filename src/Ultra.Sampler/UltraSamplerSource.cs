@@ -16,25 +16,27 @@ internal sealed class UltraSamplerSource : EventSource
     private UltraSamplerSource()
     {
     }
-
+    
     [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeCallStackEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-    public unsafe void NativeCallstack(ulong threadId, int threadState, int threadCpuUsage, int previousFrameCount, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
+    public unsafe void NativeCallstack(ulong samplingId, ulong threadId, int threadState, int threadCpuUsage, int previousFrameCount, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
     {
-        var evt = stackalloc EventData[6];
-        evt[0].DataPointer = (nint)(void*)&threadId;
+        var evt = stackalloc EventData[7];
+        evt[0].DataPointer = (nint)(void*)&samplingId;
         evt[0].Size = sizeof(ulong);
-        evt[1].DataPointer = (nint)(void*)&threadState;
-        evt[1].Size = sizeof(int);
-        evt[2].DataPointer = (nint)(void*)&threadCpuUsage;
+        evt[1].DataPointer = (nint)(void*)&threadId;
+        evt[1].Size = sizeof(ulong);
+        evt[2].DataPointer = (nint)(void*)&threadState;
         evt[2].Size = sizeof(int);
-        evt[3].DataPointer = (nint)(void*)&previousFrameCount;
+        evt[3].DataPointer = (nint)(void*)&threadCpuUsage;
         evt[3].Size = sizeof(int);
-        evt[4].DataPointer = (nint)(void*)&framesSize;
+        evt[4].DataPointer = (nint)(void*)&previousFrameCount;
         evt[4].Size = sizeof(int);
-        evt[5].DataPointer = (nint)(void*)frames;
-        evt[5].Size = framesSize;
-        WriteEventCore(UltraSamplerConstants.NativeCallStackEventId, 6, evt);
+        evt[5].DataPointer = (nint)(void*)&framesSize;
+        evt[5].Size = sizeof(int);
+        evt[6].DataPointer = (nint)(void*)frames;
+        evt[6].Size = framesSize;
+        WriteEventCore(UltraSamplerConstants.NativeCallStackEventId, 7, evt);
     }
 
     [Event(UltraSamplerConstants.NativeModuleEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeModuleEventId)]
@@ -74,6 +76,34 @@ internal sealed class UltraSamplerSource : EventSource
         }
     }
 
+    [Event(UltraSamplerConstants.NativeThreadStartEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeThreadStartEventId)]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
+    public unsafe void NativeThreadStart(ulong samplingId, ulong threadId, int threadNameSize, byte* threadName)
+    {
+        var evt = stackalloc EventData[4];
+        evt[0].DataPointer = (nint)(void*)&samplingId;
+        evt[0].Size = sizeof(ulong);
+        evt[1].DataPointer = (nint)(void*)&threadId;
+        evt[1].Size = sizeof(ulong);
+        evt[2].DataPointer = (nint)(void*)&threadNameSize;
+        evt[2].Size = sizeof(int);
+        evt[3].DataPointer = (nint)(void*)threadName;
+        evt[3].Size = threadNameSize;
+        WriteEventCore(UltraSamplerConstants.NativeThreadStartEventId, 4, evt);
+    }
+
+    [Event(UltraSamplerConstants.NativeThreadStopEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeThreadStopEventId)]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
+    public unsafe void NativeThreadStop(ulong samplingId, ulong threadId)
+    {
+        var evt = stackalloc EventData[2];
+        evt[0].DataPointer = (nint)(void*)&samplingId;
+        evt[0].Size = sizeof(ulong);
+        evt[1].DataPointer = (nint)(void*)&threadId;
+        evt[1].Size = sizeof(ulong);
+        WriteEventCore(UltraSamplerConstants.NativeThreadStopEventId, 2, evt);
+    }
+    
     [NonEvent]
     protected override void OnEventCommand(EventCommandEventArgs command)
     {
