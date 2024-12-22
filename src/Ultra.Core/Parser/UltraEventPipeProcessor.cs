@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Diagnostics.Tracing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Microsoft.Diagnostics.Tracing;
@@ -40,6 +41,7 @@ internal class UltraEventPipeProcessor
         _samplerParser.EventNativeModule += SamplerParserOnEventNativeModule;
         _samplerParser.EventNativeThreadStart += SamplerParserOnEventNativeThreadStart;
         _samplerParser.EventNativeThreadStop += SamplerParserOnEventNativeThreadStop;
+        _samplerParser.Source.Dynamic.AddCallbackForProviderEvent("Microsoft-DotNETCore-EventPipe", "ProcessInfo", SamplerProcessInfo);
     }
 
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource, EventPipeEventSource clrEventSource) : this(samplerEventSource)
@@ -226,6 +228,14 @@ internal class UltraEventPipeProcessor
         }
         return threadSamplingState;
     }
+
+    private void SamplerProcessInfo(TraceEvent obj)
+    {
+        var osInformation = obj.PayloadByName("OSInformation") as string;
+        var archInformation = obj.PayloadByName("ArchInformation") as string;
+        //Console.WriteLine(osInformation);
+    }
+
 
     private class ThreadSamplerState
     {
