@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Ultra.Core.Model;
+using Ultra.Sampler;
 using XenoAtom.Collections;
 
 namespace Ultra.Core;
@@ -235,7 +236,6 @@ internal class UltraEventPipeProcessor
         if (!_managedMethods.TryFindMethodById(obj.MethodID, out var method))
         {
             return;
-
         }
 
         int validOffsets = 0;
@@ -395,6 +395,7 @@ internal class UltraEventPipeProcessor
         private readonly UCodeAddressIndex[] _previousFrame = new UCodeAddressIndex[63]; // 64 - 1 as in the sampler, the first index is used for the count
         private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
         private readonly UTraceThread _thread;
+        private TimeSpan _lastSampleTime;
 
         public UnsafeList<GCTraceMarker> PendingGCEvents = new();
 
@@ -451,7 +452,9 @@ internal class UltraEventPipeProcessor
 
             var callStackIndex = process.CallStacks.InsertCallStack(callStack);
 
-            _thread.Samples.Add(new(callStackIndex, UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec), TimeSpan.Zero)); // TODO: cputime
+            var cpuTime = _lastSampleTime == TimeSpan.Zero || evt.ThreadState != UltraSamplerThreadState.Running ? 0.0 : evt.TimeStampRelativeMSec - _lastSampleTime.TotalMilliseconds;
+            _thread.Samples.Add(new(callStackIndex, UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec), UTimeSpan.FromMilliseconds(cpuTime)));
+            _lastSampleTime = TimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec);
         }
     }
 }
