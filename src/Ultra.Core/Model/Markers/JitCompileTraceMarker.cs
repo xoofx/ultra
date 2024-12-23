@@ -15,7 +15,22 @@ public sealed record JitCompileTraceMarker : UTraceMarker
     public required string FullName { get; init; }
 
     /// <summary>
+    /// Gets or sets the namespace of the method.
+    /// </summary>
+    public required string MethodNamespace { get; init; }
+
+    /// <summary>
+    /// Gets or sets the name of the method.
+    /// </summary>
+    public required string MethodName { get; init; }
+
+    /// <summary>
+    /// Gets or sets the signature of the method.
+    /// </summary>
+    public required string MethodSignature { get; init; }
+
+    /// <summary>
     /// Gets or sets the IL size of the method.
     /// </summary>
-    public int MethodILSize { get; set; }
+    public required int MethodILSize { get; set; }
 }

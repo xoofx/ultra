@@ -12,7 +12,7 @@ public abstract record UTraceMarker
     /// <summary>
     /// Gets or sets the start time of the marker. The time is relative to the start of the profiling session.
     /// </summary>
-    public UTimeSpan StartTime { get; set; }
+    public required UTimeSpan StartTime { get; set; }
 
     /// <summary>
     /// Gets or sets the duration of the marker.

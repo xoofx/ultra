@@ -12,10 +12,10 @@ public sealed record GCSuspendExecutionEngineTraceMarker : UTraceMarker
     /// <summary>
     /// Gets or sets the reason for the suspension.
     /// </summary>
-    public string? Reason { get; set; }
+    public required string? Reason { get; set; }
 
     /// <summary>
     /// Gets or sets the count of suspensions.
     /// </summary>
-    public int Count { get; set; }
+    public required int Count { get; set; }
 }

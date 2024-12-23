@@ -24,7 +24,7 @@ internal class UltraEventPipeProcessor
     private readonly UTraceModuleList _modules;
     private readonly UTraceManagedMethodList _managedMethods;
     private UnsafeDictionary<ulong, ThreadSamplerState> _threadSamplingStates = new();
-    
+
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
 
@@ -35,7 +35,7 @@ internal class UltraEventPipeProcessor
         _managedMethods = _process.ManagedMethods;
 
         _samplerParser = new UltraSamplerParser(samplerEventSource);
-        
+
         // NativeCallstack and NativeModule
         _samplerParser.EventNativeCallstack += SamplerParserOnEventNativeCallstack;
         _samplerParser.EventNativeModule += SamplerParserOnEventNativeModule;
@@ -73,9 +73,20 @@ internal class UltraEventPipeProcessor
         };
 
         // MethodLoad
+        _clrEventSource.Clr.MethodJittingStarted += ClrOnMethodJittingStarted;
         _clrEventSource.Clr.MethodLoadVerbose += ProcessMethodLoadVerbose;
         _clrEventSource.Clr.MethodDCStartVerboseV2 += ProcessMethodLoadVerbose;
         _clrRundownTraceEventParser.MethodDCStartVerbose += ProcessMethodLoadVerbose;
+
+        // GC Events
+        _clrEventSource.Clr.GCHeapStats += ClrOnGCHeapStats;
+        _clrEventSource.Clr.GCAllocationTick += ClrOnGCAllocationTick;
+        _clrEventSource.Clr.GCStart += ClrOnGCStart;
+        _clrEventSource.Clr.GCStop += ClrOnGCStop;
+        _clrEventSource.Clr.GCSuspendEEStart += ClrOnGCSuspendEEStart;
+        _clrEventSource.Clr.GCSuspendEEStop += ClrOnGCSuspendEEStop;
+        _clrEventSource.Clr.GCRestartEEStart += ClrOnGCRestartEEStart;
+        _clrEventSource.Clr.GCRestartEEStop += ClrOnGCRestartEEStop;
 
         // MethodUnload
         _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodLoadVerbose;
@@ -85,6 +96,138 @@ internal class UltraEventPipeProcessor
         // MethodILToNativeMapTraceData
         _clrEventSource.Clr.MethodILToNativeMap += ProcessMethodILToNativeMap;
         _clrRundownTraceEventParser.MethodILToNativeMapDCStop += ProcessMethodILToNativeMap;
+    }
+
+    private void ClrOnGCRestartEEStart(GCNoUserDataTraceData gcRestartEE)
+    {
+        var gcRestartEEMarker = new GCRestartExecutionEngineTraceMarker()
+        {
+            StartTime = UTimeSpan.FromMilliseconds(gcRestartEE.TimeStampRelativeMSec)
+        };
+        GetThreadSamplingState((ulong)gcRestartEE.ThreadID).PendingGCRestartExecutionEngineTraceMarkers.Add(gcRestartEEMarker);
+    }
+
+    private void ClrOnGCRestartEEStop(GCNoUserDataTraceData gcRestartEE)
+    {
+        var threadState = GetThreadSamplingState((ulong)gcRestartEE.ThreadID);
+        if (threadState.PendingGCRestartExecutionEngineTraceMarkers.Count == 0) return;
+        var gcRestartEEMarker = threadState.PendingGCRestartExecutionEngineTraceMarkers.Pop();
+        gcRestartEEMarker.Duration = TimeSpan.FromMilliseconds(gcRestartEE.TimeStampRelativeMSec) - gcRestartEEMarker.StartTime.Value;
+        threadState.Thread.Markers.Add(gcRestartEEMarker);
+    }
+
+    private void ClrOnGCSuspendEEStart(GCSuspendEETraceData gcSuspendEE)
+    {
+        var gcSuspendEEMarker = new GCSuspendExecutionEngineTraceMarker()
+        {
+            StartTime = UTimeSpan.FromMilliseconds(gcSuspendEE.TimeStampRelativeMSec),
+            Reason = gcSuspendEE.Reason.ToString(),
+            Count = gcSuspendEE.Count
+        };
+
+        GetThreadSamplingState((ulong)gcSuspendEE.ThreadID).PendingGCSuspendExecutionEngineTraceMarkers.Add(gcSuspendEEMarker);
+    }
+
+    private void ClrOnGCSuspendEEStop(GCNoUserDataTraceData obj)
+    {
+        var threadState = GetThreadSamplingState((ulong)obj.ThreadID);
+        if (threadState.PendingGCSuspendExecutionEngineTraceMarkers.Count == 0) return;
+        var gcSuspendEEMarker = threadState.PendingGCSuspendExecutionEngineTraceMarkers.Pop();
+        gcSuspendEEMarker.Duration = TimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec) - gcSuspendEEMarker.StartTime.Value;
+        threadState.Thread.Markers.Add(gcSuspendEEMarker);
+    }
+
+    private void ClrOnGCStop(GCEndTraceData obj)
+    {
+        var threadState = GetThreadSamplingState((ulong)obj.ThreadID);
+        if (threadState.PendingGCEvents.Count == 0) return;
+        var gcEvent = threadState.PendingGCEvents.Pop();
+        gcEvent.Duration = TimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec) - gcEvent.StartTime.Value;
+        threadState.Thread.Markers.Add(gcEvent);
+    }
+
+    private void ClrOnGCStart(GCStartTraceData gcStart)
+    {
+        var gcEvent = new GCTraceMarker
+        {
+            StartTime = UTimeSpan.FromMilliseconds(gcStart.TimeStampRelativeMSec),
+            Reason = gcStart.Reason.ToString(),
+            Count = gcStart.Count,
+            Depth = gcStart.Depth,
+            GCType = gcStart.Type.ToString()
+        };
+        GetThreadSamplingState((ulong)gcStart.ThreadID).PendingGCEvents.Push(gcEvent);
+    }
+
+    private void ClrOnGCAllocationTick(GCAllocationTickTraceData allocationTick)
+    {
+        var allocationTickEvent = new GCAllocationTickTraceMarker
+        {
+            StartTime = UTimeSpan.FromMilliseconds(allocationTick.TimeStampRelativeMSec),
+            AllocationAmount = allocationTick.AllocationAmount,
+            AllocationKind = allocationTick.AllocationKind switch
+            {
+                GCAllocationKind.Small => "Small",
+                GCAllocationKind.Large => "Large",
+                GCAllocationKind.Pinned => "Pinned",
+                _ => "Unknown"
+            },
+            TypeName = allocationTick.TypeName,
+            HeapIndex = allocationTick.HeapIndex
+        };
+
+        GetThreadSamplingState((ulong)allocationTick.ThreadID).Thread.Markers.Add(allocationTickEvent);
+    }
+
+    private void ClrOnGCHeapStats(GCHeapStatsTraceData evt)
+    {
+        var threadState = GetThreadSamplingState((ulong)evt.ThreadID);
+        var gcHeapStats = new GCHeapStatsTraceMarker()
+        {
+            StartTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec),
+            TotalHeapSize = evt.TotalHeapSize,
+            TotalPromoted = evt.TotalPromoted,
+            GenerationSize0 = evt.GenerationSize0,
+            TotalPromotedSize0 = evt.TotalPromotedSize0,
+            GenerationSize1 = evt.GenerationSize1,
+            TotalPromotedSize1 = evt.TotalPromotedSize1,
+            GenerationSize2 = evt.GenerationSize2,
+            TotalPromotedSize2 = evt.TotalPromotedSize2,
+            GenerationSize3 = evt.GenerationSize3,
+            TotalPromotedSize3 = evt.TotalPromotedSize3,
+            GenerationSize4 = evt.GenerationSize4,
+            TotalPromotedSize4 = evt.TotalPromotedSize4,
+            FinalizationPromotedSize = evt.FinalizationPromotedSize,
+            FinalizationPromotedCount = evt.FinalizationPromotedCount,
+            PinnedObjectCount = evt.PinnedObjectCount,
+            SinkBlockCount = evt.SinkBlockCount,
+            GCHandleCount = evt.GCHandleCount
+        };
+        threadState.Thread.Markers.Add(gcHeapStats);
+    }
+
+    private void ClrOnMethodJittingStarted(MethodJittingStartedTraceData methodJittingStarted)
+    {
+        var threadState = GetThreadSamplingState((ulong)methodJittingStarted.ThreadID);
+
+        var signature = methodJittingStarted.MethodSignature;
+        var indexOfParent = signature.IndexOf('(');
+        if (indexOfParent >= 0)
+        {
+            signature = signature.Substring(indexOfParent);
+        }
+
+        var jitCompileMarker = new JitCompileTraceMarker()
+        {
+            StartTime = UTimeSpan.FromMilliseconds(methodJittingStarted.TimeStampRelativeMSec),
+            FullName = $"{methodJittingStarted.MethodNamespace}.{methodJittingStarted.MethodName}{signature}",
+            MethodNamespace = methodJittingStarted.MethodNamespace,
+            MethodName = methodJittingStarted.MethodName,
+            MethodSignature = methodJittingStarted.MethodSignature,
+            MethodILSize = methodJittingStarted.MethodILSize
+        };
+
+        threadState.PendingJitCompiles[methodJittingStarted.MethodID] = jitCompileMarker;
     }
 
     private void ProcessMethodILToNativeMap(MethodILToNativeMapTraceData obj)
@@ -135,6 +278,16 @@ internal class UltraEventPipeProcessor
 
     private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
+        // Log Jit Marker
+        var threadState = GetThreadSamplingState((ulong)method.ThreadID);
+        if (threadState.PendingJitCompiles.TryGetValue(method.MethodID, out var jitCompileMarker))
+        {
+            jitCompileMarker.Duration = TimeSpan.FromMilliseconds(method.TimeStampRelativeMSec) -
+                                                     jitCompileMarker.StartTime.Value;
+            threadState.Thread.Markers.Add(jitCompileMarker);
+            threadState.PendingJitCompiles.Remove(method.MethodID);
+        }
+
         _managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize);
     }
 
@@ -157,7 +310,7 @@ internal class UltraEventPipeProcessor
             }
         }
     }
-    
+
     private void SamplerParserOnEventNativeModule(UltraNativeModuleTraceEvent evt)
     {
         if (evt.ModulePath is not null)
@@ -243,6 +396,14 @@ internal class UltraEventPipeProcessor
         private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
         private readonly UTraceThread _thread;
 
+        public UnsafeList<GCTraceMarker> PendingGCEvents = new();
+
+        public UnsafeList<GCSuspendExecutionEngineTraceMarker> PendingGCSuspendExecutionEngineTraceMarkers = new();
+
+        public UnsafeList<GCRestartExecutionEngineTraceMarker> PendingGCRestartExecutionEngineTraceMarkers = new();
+
+        public UnsafeDictionary<long, JitCompileTraceMarker> PendingJitCompiles = new();
+
         public ThreadSamplerState(UTraceThread thread)
         {
             _thread = thread;
@@ -279,7 +440,7 @@ internal class UltraEventPipeProcessor
                     callStackIt = ref Unsafe.Add(ref callStackIt, 1);
                 }
             }
-            
+
             // Copy the new frame to the previous frame
             var callStack = _callStack.AsSpan();
             var maxLengthToCopy = Math.Min(_previousFrame.Length, callStack.Length);
