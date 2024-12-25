@@ -64,7 +64,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
 
         _callbackDyldAdded = new MacOSLibSystem.dyld_register_callback(CallbackDyldAdded);
         _callbackDyldRemoved = new MacOSLibSystem.dyld_register_callback(CallbackDyldRemoved);
-        
+
         // Register dyld callbacks
         _initializingModules = true;
         MacOSLibSystem._dyld_register_func_for_add_image(Marshal.GetFunctionPointerForDelegate(_callbackDyldAdded));
@@ -118,16 +118,17 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             MacOS.MacOSLibSystem.pthread_threadid_np(0, out _samplerThreadId)
                 .ThrowIfError("pthread_threadid_np");
 
-            bool sendManifest = true;
+            bool sessionStarted = true;
 
             while (!_samplerStopped)
             {
                 if (_samplerEnabled)
                 {
-                    if (sendManifest)
+                    if (sessionStarted)
                     {
                         SendManifest();
-                        sendManifest = false;
+                        SendProcessStart();
+                        sessionStarted = false;
                     }
 
                     // Load all pending native module events before sampling
@@ -136,14 +137,14 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     // Sample the callstacks
                     Sample(rootTask, UltraSamplerSource.Log.NativeCallstack);
 
-                    // Sleep for 1ms
+                    // Sleep for 1ms (lowest we can get on macOS)
                     Thread.Sleep(1);
                 }
                 else
                 {
                     ClearThreadStates();
                     _samplerResumeThreadEvent.WaitOne();
-                    sendManifest = true;
+                    sessionStarted = true;
                 }
             }
         }
@@ -152,7 +153,6 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             Console.Error.WriteLine($"Ultra-Sampler stopped. Unexpected exception while sampling: {ex}");
         }
     }
-
 
     private void ClearThreadStates()
     {
@@ -178,6 +178,11 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         {
             // Ignore
         }
+    }
+
+    private void SendProcessStart()
+    {
+        UltraSamplerSource.Log.NativeProcessStart(Process.GetCurrentProcess().StartTime, (int)RuntimeInformation.ProcessArchitecture, RuntimeInformation.RuntimeIdentifier, RuntimeInformation.OSDescription);
     }
 
     private void CallbackDyldAdded(MacOSLibSystem.mach_header* header, nint slideVmAddr)
@@ -285,7 +290,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         }
 
         if (startAddress == ulong.MaxValue) return 0;
-        
+
         command = ref firstCommand;
         for (uint i = 0; i < nbCommands; i++)
         {

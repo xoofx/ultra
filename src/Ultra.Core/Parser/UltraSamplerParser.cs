@@ -15,7 +15,7 @@ internal sealed class UltraSamplerParser : TraceEventParser
     public const string ProviderName = UltraSamplerConstants.ProviderName;
 
     private static volatile TraceEvent[]? _templates;
-    
+
     public UltraSamplerParser(TraceEventSource source) : base(source)
     {
     }
@@ -44,6 +44,12 @@ internal sealed class UltraSamplerParser : TraceEventParser
         remove => source.UnregisterEventTemplate(value, UltraSamplerConstants.NativeThreadStopEventId, ProviderGuid);
     }
 
+    public event Action<UltraNativeProcessStartTraceEvent> EventNativeProcessStart
+    {
+        add => source.RegisterEventTemplate(CreateUltraNativeProcessStartTraceEvent(value));
+        remove => source.UnregisterEventTemplate(value, UltraSamplerConstants.NativeProcessStartEventId, ProviderGuid);
+    }
+
     /// <inheritdoc />
     protected override string GetProviderName() => UltraSamplerConstants.ProviderName;
 
@@ -57,7 +63,8 @@ internal sealed class UltraSamplerParser : TraceEventParser
                 CreateUltraNativeCallstackTraceEvent(null),
                 CreateUltraNativeModuleTraceEvent(null),
                 CreateUltraNativeThreadStartTraceEvent(null),
-                CreateUltraNativeThreadStopTraceEvent(null)
+                CreateUltraNativeThreadStopTraceEvent(null),
+                CreateUltraNativeProcessStartTraceEvent(null)
             ];
         }
 
@@ -81,4 +88,7 @@ internal sealed class UltraSamplerParser : TraceEventParser
 
     private static TraceEvent CreateUltraNativeThreadStopTraceEvent(Action<UltraNativeThreadStopTraceEvent>? value)
         => new UltraNativeThreadStopTraceEvent(value, UltraSamplerConstants.NativeThreadStopEventId, 0, "NativeThreadStop", Guid.Empty, 0, "NativeThreadStop", ProviderGuid, ProviderName);
+
+    private static TraceEvent CreateUltraNativeProcessStartTraceEvent(Action<UltraNativeProcessStartTraceEvent>? value)
+        => new UltraNativeProcessStartTraceEvent(value, UltraSamplerConstants.NativeProcessStartEventId, 0, "NativeProcessStart", Guid.Empty, 0, "NativeProcessStart", ProviderGuid, ProviderName);
 }

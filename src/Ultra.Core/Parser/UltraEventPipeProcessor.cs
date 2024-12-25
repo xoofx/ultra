@@ -2,8 +2,6 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
-using System.Diagnostics.Tracing;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers.Clr;
@@ -20,11 +18,11 @@ internal class UltraEventPipeProcessor
 {
     private readonly EventPipeEventSource _samplerEventSource;
     private readonly UltraSamplerParser _samplerParser;
+    private ProcessState? _currentProcessState;
 
-    private readonly UTraceProcess _process = new();
-    private readonly UTraceModuleList _modules;
-    private readonly UTraceManagedMethodList _managedMethods;
-    private UnsafeDictionary<ulong, ThreadSamplerState> _threadSamplingStates = new();
+    private readonly UTraceSession _session = new();
+
+    private readonly UnsafeDictionary<int, ProcessState> _processes = new(1);
 
     private readonly EventPipeEventSource? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
@@ -32,9 +30,6 @@ internal class UltraEventPipeProcessor
     public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource)
     {
         _samplerEventSource = samplerEventSource;
-        _modules = _process.Modules;
-        _managedMethods = _process.ManagedMethods;
-
         _samplerParser = new UltraSamplerParser(samplerEventSource);
 
         // NativeCallstack and NativeModule
@@ -42,6 +37,7 @@ internal class UltraEventPipeProcessor
         _samplerParser.EventNativeModule += SamplerParserOnEventNativeModule;
         _samplerParser.EventNativeThreadStart += SamplerParserOnEventNativeThreadStart;
         _samplerParser.EventNativeThreadStop += SamplerParserOnEventNativeThreadStop;
+        _samplerParser.EventNativeProcessStart += SamplerParserOnEventNativeProcessStart;
         _samplerParser.Source.Dynamic.AddCallbackForProviderEvent("Microsoft-DotNETCore-EventPipe", "ProcessInfo", SamplerProcessInfo);
     }
 
@@ -99,18 +95,32 @@ internal class UltraEventPipeProcessor
         _clrRundownTraceEventParser.MethodILToNativeMapDCStop += ProcessMethodILToNativeMap;
     }
 
+    private void SamplerParserOnEventNativeProcessStart(UltraNativeProcessStartTraceEvent processStartEvent)
+    {
+        var processState = GetProcessState(processStartEvent);
+        var process = processState.CurrentProcess!;
+
+        process.StartTime = processStartEvent.StartTimeUtc;
+        process.ProcessArchitecture = processStartEvent.ProcessArchitecture;
+        process.RuntimeIdentifier = processStartEvent.RuntimeIdentifier.ToString();
+        process.OSDescription = processStartEvent.OSDescription.ToString();
+
+        processState.SetCurrentProcess(process);
+        _session.Processes.Add(process);
+    }
+
     private void ClrOnGCRestartEEStart(GCNoUserDataTraceData gcRestartEE)
     {
         var gcRestartEEMarker = new GCRestartExecutionEngineTraceMarker()
         {
             StartTime = UTimeSpan.FromMilliseconds(gcRestartEE.TimeStampRelativeMSec)
         };
-        GetThreadSamplingState((ulong)gcRestartEE.ThreadID).PendingGCRestartExecutionEngineTraceMarkers.Add(gcRestartEEMarker);
+        GetProcessState(gcRestartEE).GetThreadSamplingState((ulong)gcRestartEE.ThreadID).PendingGCRestartExecutionEngineTraceMarkers.Add(gcRestartEEMarker);
     }
 
     private void ClrOnGCRestartEEStop(GCNoUserDataTraceData gcRestartEE)
     {
-        var threadState = GetThreadSamplingState((ulong)gcRestartEE.ThreadID);
+        var threadState = GetThreadSamplingState(gcRestartEE, (ulong)gcRestartEE.ThreadID);
         if (threadState.PendingGCRestartExecutionEngineTraceMarkers.Count == 0) return;
         var gcRestartEEMarker = threadState.PendingGCRestartExecutionEngineTraceMarkers.Pop();
         gcRestartEEMarker.Duration = TimeSpan.FromMilliseconds(gcRestartEE.TimeStampRelativeMSec) - gcRestartEEMarker.StartTime.Value;
@@ -126,12 +136,12 @@ internal class UltraEventPipeProcessor
             Count = gcSuspendEE.Count
         };
 
-        GetThreadSamplingState((ulong)gcSuspendEE.ThreadID).PendingGCSuspendExecutionEngineTraceMarkers.Add(gcSuspendEEMarker);
+        GetThreadSamplingState(gcSuspendEE, (ulong)gcSuspendEE.ThreadID).PendingGCSuspendExecutionEngineTraceMarkers.Add(gcSuspendEEMarker);
     }
 
     private void ClrOnGCSuspendEEStop(GCNoUserDataTraceData obj)
     {
-        var threadState = GetThreadSamplingState((ulong)obj.ThreadID);
+        var threadState = GetThreadSamplingState(obj, (ulong)obj.ThreadID);
         if (threadState.PendingGCSuspendExecutionEngineTraceMarkers.Count == 0) return;
         var gcSuspendEEMarker = threadState.PendingGCSuspendExecutionEngineTraceMarkers.Pop();
         gcSuspendEEMarker.Duration = TimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec) - gcSuspendEEMarker.StartTime.Value;
@@ -140,7 +150,7 @@ internal class UltraEventPipeProcessor
 
     private void ClrOnGCStop(GCEndTraceData obj)
     {
-        var threadState = GetThreadSamplingState((ulong)obj.ThreadID);
+        var threadState = GetThreadSamplingState(obj, (ulong)obj.ThreadID);
         if (threadState.PendingGCEvents.Count == 0) return;
         var gcEvent = threadState.PendingGCEvents.Pop();
         gcEvent.Duration = TimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec) - gcEvent.StartTime.Value;
@@ -157,7 +167,7 @@ internal class UltraEventPipeProcessor
             Depth = gcStart.Depth,
             GCType = gcStart.Type.ToString()
         };
-        GetThreadSamplingState((ulong)gcStart.ThreadID).PendingGCEvents.Push(gcEvent);
+        GetThreadSamplingState(gcStart, (ulong)gcStart.ThreadID).PendingGCEvents.Push(gcEvent);
     }
 
     private void ClrOnGCAllocationTick(GCAllocationTickTraceData allocationTick)
@@ -177,12 +187,12 @@ internal class UltraEventPipeProcessor
             HeapIndex = allocationTick.HeapIndex
         };
 
-        GetThreadSamplingState((ulong)allocationTick.ThreadID).Thread.Markers.Add(allocationTickEvent);
+        GetThreadSamplingState(allocationTick, (ulong)allocationTick.ThreadID).Thread.Markers.Add(allocationTickEvent);
     }
 
     private void ClrOnGCHeapStats(GCHeapStatsTraceData evt)
     {
-        var threadState = GetThreadSamplingState((ulong)evt.ThreadID);
+        var threadState = GetThreadSamplingState(evt, (ulong)evt.ThreadID);
         var gcHeapStats = new GCHeapStatsTraceMarker()
         {
             StartTime = UTimeSpan.FromMilliseconds(evt.TimeStampRelativeMSec),
@@ -209,7 +219,7 @@ internal class UltraEventPipeProcessor
 
     private void ClrOnMethodJittingStarted(MethodJittingStartedTraceData methodJittingStarted)
     {
-        var threadState = GetThreadSamplingState((ulong)methodJittingStarted.ThreadID);
+        var threadState = GetThreadSamplingState(methodJittingStarted, (ulong)methodJittingStarted.ThreadID);
 
         var signature = methodJittingStarted.MethodSignature;
         var indexOfParent = signature.IndexOf('(');
@@ -233,7 +243,8 @@ internal class UltraEventPipeProcessor
 
     private void ProcessMethodILToNativeMap(MethodILToNativeMapTraceData obj)
     {
-        if (!_managedMethods.TryFindMethodById(obj.MethodID, out var method))
+        var managedMethods = GetProcessState(obj).CurrentProcess!.ManagedMethods;
+        if (!managedMethods.TryFindMethodById(obj.MethodID, out var method))
         {
             return;
         }
@@ -279,7 +290,7 @@ internal class UltraEventPipeProcessor
     private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
         // Log Jit Marker
-        var threadState = GetThreadSamplingState((ulong)method.ThreadID);
+        var threadState = GetThreadSamplingState(method, (ulong)method.ThreadID);
         if (threadState.PendingJitCompiles.TryGetValue(method.MethodID, out var jitCompileMarker))
         {
             jitCompileMarker.Duration = TimeSpan.FromMilliseconds(method.TimeStampRelativeMSec) -
@@ -288,12 +299,14 @@ internal class UltraEventPipeProcessor
             threadState.PendingJitCompiles.Remove(method.MethodID);
         }
 
-        _managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize);
+        var managedMethods = GetProcessState(method).CurrentProcess!.ManagedMethods;
+        managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize);
     }
 
     private void ProcessModuleLoadUnload(ModuleLoadUnloadTraceData data, bool isLoad, bool isDCStartStop)
     {
-        var module = _modules.GetOrCreateManagedModule(data.ModuleID, data.AssemblyID, data.ModuleILPath);
+        var modules = GetProcessState(data).CurrentProcess!.Modules;
+        var module = modules.GetOrCreateManagedModule(data.ModuleID, data.AssemblyID, data.ModuleILPath);
 
         module.ModuleFile.SymbolUuid = data.ManagedPdbSignature;
         module.ModuleFile.SymbolFilePath = data.ManagedPdbBuildPath;
@@ -315,7 +328,8 @@ internal class UltraEventPipeProcessor
     {
         if (evt.ModulePath is not null)
         {
-            var module = _modules.GetOrCreateNativeModule(evt.LoadAddress, evt.Size, evt.ModulePath);
+            var modules = GetProcessState(evt).CurrentProcess!.Modules;
+            var module = modules.GetOrCreateNativeModule(evt.LoadAddress, evt.Size, evt.ModulePath);
 
             if (evt.NativeModuleEventKind == UltraSamplerNativeModuleEventKind.Unloaded)
             {
@@ -334,19 +348,20 @@ internal class UltraEventPipeProcessor
 
     private void SamplerParserOnEventNativeCallstack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
-        GetThreadSamplingState(callstackTraceEvent.FrameThreadId).RecordStack(_process, callstackTraceEvent);
+        var process = GetProcessState(callstackTraceEvent).CurrentProcess!;
+        GetThreadSamplingState(callstackTraceEvent, callstackTraceEvent.FrameThreadId).RecordStack(process, callstackTraceEvent);
     }
 
     private void SamplerParserOnEventNativeThreadStart(UltraNativeThreadStartTraceEvent obj)
     {
-        var thread = GetThreadSamplingState(obj.FrameThreadId).Thread;
+        var thread = GetThreadSamplingState(obj, obj.FrameThreadId).Thread;
         thread.StartTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
         thread.Name = obj.ThreadName;
     }
 
     private void SamplerParserOnEventNativeThreadStop(UltraNativeThreadStopTraceEvent obj)
     {
-        var thread = GetThreadSamplingState(obj.FrameThreadId).Thread;
+        var thread = GetThreadSamplingState(obj, obj.FrameThreadId).Thread;
         thread.StopTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
     }
 
@@ -355,31 +370,20 @@ internal class UltraEventPipeProcessor
         // Run CLR if available
         _clrEventSource?.Process();
 
-        _managedMethods.SortMethodAddressRanges();
+        foreach (var process in _session.Processes)
+        {
+            process.ManagedMethods.SortMethodAddressRanges();
+        }
 
         // Run sampler before CLR
         _samplerEventSource.Process();
 
-        var session = new UTraceSession();
-        session.Processes.Add(_process);
+        _session.NumberOfProcessors = _samplerEventSource.NumberOfProcessors;
+        _session.StartTime = _samplerEventSource.SessionStartTime;
+        _session.Duration = _samplerEventSource.SessionDuration;
+        _session.CpuSpeedMHz = _samplerEventSource.CpuSpeedMHz;
 
-        session.NumberOfProcessors = _samplerEventSource.NumberOfProcessors;
-        session.StartTime = _samplerEventSource.SessionStartTime;
-        session.Duration = _samplerEventSource.SessionDuration;
-        session.CpuSpeedMHz = _samplerEventSource.CpuSpeedMHz;
-
-        return session;
-    }
-
-    private ThreadSamplerState GetThreadSamplingState(ulong threadID)
-    {
-        if (!_threadSamplingStates.TryGetValue(threadID, out var threadSamplingState))
-        {
-            var thread = _process.Threads.GetOrCreateThread(threadID);
-            threadSamplingState = new(thread);
-            _threadSamplingStates.Add(threadID, threadSamplingState);
-        }
-        return threadSamplingState;
+        return _session;
     }
 
     private void SamplerProcessInfo(TraceEvent obj)
@@ -389,6 +393,67 @@ internal class UltraEventPipeProcessor
         //Console.WriteLine(osInformation);
     }
 
+    private ProcessState GetProcessState(TraceEvent evt)
+    {
+        var processID = evt.ProcessID;
+        if (_currentProcessState is not null && _currentProcessState.ProcessID == processID)
+        {
+            return _currentProcessState;
+        }
+        if (!_processes.TryGetValue(processID, out var state))
+        {
+            state = new ProcessState()
+            {
+                ProcessID = processID,
+            };
+            _processes.Add(processID, state);
+
+            var process = new UTraceProcess()
+            {
+                ProcessID = evt.ProcessID
+            };
+            state.SetCurrentProcess(process);
+            _session.Processes.Add(process);
+        }
+
+        _currentProcessState = state;
+        return state;
+    }
+
+    private ThreadSamplerState GetThreadSamplingState(TraceEvent evt, ulong threadID)
+    {
+        return GetProcessState(evt).GetThreadSamplingState(threadID);
+    }
+
+    private class ProcessState
+    {
+        public required int ProcessID;
+
+        private UTraceProcess? _process;
+        private UnsafeDictionary<ulong, ThreadSamplerState> _threadSamplingStates = new();
+
+        public void SetCurrentProcess(UTraceProcess process)
+        {
+            if (_process != process)
+            {
+                _process = process;
+                _threadSamplingStates.Clear();
+            }
+        }
+
+        public UTraceProcess? CurrentProcess => _process;
+
+        public ThreadSamplerState GetThreadSamplingState(ulong threadID)
+        {
+            if (!_threadSamplingStates.TryGetValue(threadID, out var threadSamplingState))
+            {
+                var thread = _process!.Threads.GetOrCreateThread(threadID);
+                threadSamplingState = new(thread);
+                _threadSamplingStates.Add(threadID, threadSamplingState);
+            }
+            return threadSamplingState;
+        }
+    }
 
     private class ThreadSamplerState
     {

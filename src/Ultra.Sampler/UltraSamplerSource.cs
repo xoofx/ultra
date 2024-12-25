@@ -2,8 +2,10 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
+using System.Runtime.InteropServices;
 
 namespace Ultra.Sampler;
 
@@ -16,7 +18,7 @@ internal sealed class UltraSamplerSource : EventSource
     private UltraSamplerSource()
     {
     }
-    
+
     [Event(UltraSamplerConstants.NativeCallStackEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeCallStackEventId)]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
     public unsafe void NativeCallstack(ulong samplingId, ulong threadId, int threadState, int threadCpuUsage, int previousFrameCount, int framesSize, byte* frames) // frames is last to allow perfview to visualize previous fixed size arguments and also, it is an ulong otherwise the EventSource will silently fail to register!
@@ -103,7 +105,36 @@ internal sealed class UltraSamplerSource : EventSource
         evt[1].Size = sizeof(ulong);
         WriteEventCore(UltraSamplerConstants.NativeThreadStopEventId, 2, evt);
     }
-    
+
+    [Event(UltraSamplerConstants.NativeProcessStartEventId, Level = EventLevel.Informational, Task = (EventTask)UltraSamplerConstants.TaskNativeProcessStartEventId)]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
+    public unsafe void NativeProcessStart(DateTime startTime, int processArchitecture, string runtimeIdentifier, string osInformation)
+    {
+        var fileTimeUtc = startTime.ToFileTimeUtc();
+        var evt = stackalloc EventData[6];
+        evt[0].DataPointer = (nint)(void*)&fileTimeUtc;
+        evt[0].Size = sizeof(long);
+        evt[1].DataPointer = (nint)(void*)&processArchitecture;
+        evt[1].Size = sizeof(int);
+        fixed (char* runtimeIdentifierPtr = runtimeIdentifier)
+        {
+            var runtimeIdentifierSize = runtimeIdentifier.Length;
+            evt[2].DataPointer = (nint)(void*)&runtimeIdentifierSize;
+            evt[2].Size = sizeof(int);
+            evt[3].DataPointer = (nint)runtimeIdentifierPtr;
+            evt[3].Size = runtimeIdentifierSize * sizeof(char);
+            fixed (char* osInformationPtr = osInformation)
+            {
+                var osInformationSize = osInformation.Length;
+                evt[4].DataPointer = (nint)(void*)&osInformationSize;
+                evt[4].Size = sizeof(int);
+                evt[5].DataPointer = (nint)osInformationPtr;
+                evt[5].Size = osInformationSize * sizeof(char);
+                WriteEventCore(UltraSamplerConstants.NativeThreadStopEventId, 6, evt);
+            }
+        }
+    }
+
     [NonEvent]
     protected override void OnEventCommand(EventCommandEventArgs command)
     {

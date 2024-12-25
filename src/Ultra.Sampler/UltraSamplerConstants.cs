@@ -2,6 +2,8 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Diagnostics.Tracing;
+
 namespace Ultra.Sampler;
 
 public static class UltraSamplerConstants
@@ -20,6 +22,8 @@ public static class UltraSamplerConstants
 
     public const int NativeThreadStopEventId = 4;
 
+    public const int NativeProcessStartEventId = 5;
+
     public const int TaskNativeCallStackEventId = 1;
 
     public const int TaskNativeModuleEventId = 2;
@@ -27,4 +31,6 @@ public static class UltraSamplerConstants
     public const int TaskNativeThreadStartEventId = 3;
 
     public const int TaskNativeThreadStopEventId = 4;
+
+    public const int TaskNativeProcessStartEventId = 5;
 }
