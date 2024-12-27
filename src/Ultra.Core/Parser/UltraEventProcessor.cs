@@ -14,9 +14,9 @@ namespace Ultra.Core;
 /// <summary>
 /// Internal class to process events from an EventPipe session (Sampler and CLR)
 /// </summary>
-internal class UltraEventPipeProcessor
+internal class UltraEventProcessor
 {
-    private readonly EventPipeEventSource _samplerEventSource;
+    private readonly TraceEventDispatcher _samplerEventSource;
     private readonly UltraSamplerParser _samplerParser;
     private ProcessState? _currentProcessState;
 
@@ -24,10 +24,10 @@ internal class UltraEventPipeProcessor
 
     private readonly UnsafeDictionary<int, ProcessState> _processes = new(1);
 
-    private readonly EventPipeEventSource? _clrEventSource;
+    private readonly TraceEventDispatcher? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
 
-    public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource)
+    public UltraEventProcessor(TraceEventDispatcher samplerEventSource)
     {
         _samplerEventSource = samplerEventSource;
         _samplerParser = new UltraSamplerParser(samplerEventSource);
@@ -41,7 +41,7 @@ internal class UltraEventPipeProcessor
         _samplerParser.Source.Dynamic.AddCallbackForProviderEvent("Microsoft-DotNETCore-EventPipe", "ProcessInfo", SamplerProcessInfo);
     }
 
-    public UltraEventPipeProcessor(EventPipeEventSource samplerEventSource, EventPipeEventSource clrEventSource) : this(samplerEventSource)
+    public UltraEventProcessor(TraceEventDispatcher samplerEventSource, TraceEventDispatcher clrEventSource) : this(samplerEventSource)
     {
         _clrEventSource = clrEventSource;
         _clrRundownTraceEventParser = new ClrRundownTraceEventParser(clrEventSource);
@@ -93,6 +93,27 @@ internal class UltraEventPipeProcessor
         // MethodILToNativeMapTraceData
         _clrEventSource.Clr.MethodILToNativeMap += ProcessMethodILToNativeMap;
         _clrRundownTraceEventParser.MethodILToNativeMapDCStop += ProcessMethodILToNativeMap;
+    }
+
+    public UTraceSession Run()
+    {
+        // Run CLR if available
+        _clrEventSource?.Process();
+
+        foreach (var process in _session.Processes)
+        {
+            process.ManagedMethods.SortMethodAddressRanges();
+        }
+
+        // Run sampler before CLR
+        _samplerEventSource.Process();
+
+        _session.NumberOfProcessors = _samplerEventSource.NumberOfProcessors;
+        _session.StartTime = _samplerEventSource.SessionStartTime;
+        _session.Duration = _samplerEventSource.SessionDuration;
+        _session.CpuSpeedMHz = _samplerEventSource.CpuSpeedMHz;
+
+        return _session;
     }
 
     private void SamplerParserOnEventNativeProcessStart(UltraNativeProcessStartTraceEvent processStartEvent)
@@ -363,27 +384,6 @@ internal class UltraEventPipeProcessor
     {
         var thread = GetThreadSamplingState(obj, obj.FrameThreadId).Thread;
         thread.StopTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
-    }
-
-    public UTraceSession Run()
-    {
-        // Run CLR if available
-        _clrEventSource?.Process();
-
-        foreach (var process in _session.Processes)
-        {
-            process.ManagedMethods.SortMethodAddressRanges();
-        }
-
-        // Run sampler before CLR
-        _samplerEventSource.Process();
-
-        _session.NumberOfProcessors = _samplerEventSource.NumberOfProcessors;
-        _session.StartTime = _samplerEventSource.SessionStartTime;
-        _session.Duration = _samplerEventSource.SessionDuration;
-        _session.CpuSpeedMHz = _samplerEventSource.CpuSpeedMHz;
-
-        return _session;
     }
 
     private void SamplerProcessInfo(TraceEvent obj)

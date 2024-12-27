@@ -41,10 +41,10 @@ public class UltraSamplerTests
     {
         return; // Disabled
 
-        using var samplerEventSource = new EventPipeEventSource(@"C:\code\Captures\ultra_Ultra_2024-12-22_15_00_14_2860_sampler.nettrace");
-        using var clrEventSource = new EventPipeEventSource(@"C:\code\Captures\ultra_Ultra_2024-12-22_15_00_14_2860_clr.nettrace");
+        using var samplerEventSource = new EventPipeEventSource(@"/Users/xoofx/code/captures/ultra_Ultra_2024-12-25_12_46_29_8804_sampler.nettrace");
+        using var clrEventSource = new EventPipeEventSource(@"/Users/xoofx/code/captures/ultra_Ultra_2024-12-25_12_46_29_8804_clr.nettrace");
 
-        var processor = new UltraEventPipeProcessor(samplerEventSource, clrEventSource);
+        var processor = new UltraEventProcessor(samplerEventSource, clrEventSource);
 
         var session = processor.Run();
 
@@ -60,7 +60,7 @@ public class UltraSamplerTests
 
         Console.WriteLine($"CodeAddresses: {process.CodeAddresses.Items.Length} items");
         Console.WriteLine($"CallStacks: {process.CallStacks.Items.Length} items");
-        
+
         Console.WriteLine("----------------------------------------------------------------------------------------");
         Console.WriteLine($"Threads {process.Threads.Items.Length} items");
         Console.WriteLine("----------------------------------------------------------------------------------------");
@@ -111,10 +111,10 @@ public class UltraSamplerTests
                         }
                     }
                     //Console.WriteLine($"    {addressIndex}");
-                } 
+                }
             }
         }
-        
+
         //EventPipeEventSource
         //TraceLog.CreateFromEventPipeDataFile(@"C:\code\Captures\ultra_Ultra_2024-12-17_08_13_37_34101_sampler.nettrace");
         //TraceLog.CreateFromEventPipeDataFile(@"C:\code\Captures\ultra_Ultra_2024-12-17_08_13_37_34101_clr.nettrace");
