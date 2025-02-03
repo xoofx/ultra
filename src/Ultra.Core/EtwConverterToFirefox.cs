@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using ByteSizeLib;
 using Microsoft.Diagnostics.Symbols;
 using Microsoft.Diagnostics.Tracing;
@@ -83,7 +84,7 @@ public sealed class EtwConverterToFirefox : IDisposable
         _symbolReader.SecurityCheck = (pdbPath) => true;
 
         this._profile = CreateProfile();
-        
+
         this._options = options;
 
         _mapModuleFileIndexToFirefox = new();
@@ -104,6 +105,50 @@ public sealed class EtwConverterToFirefox : IDisposable
     }
 
     /// <summary>
+    /// Inspects the ETW trace file and returns a JSON string with the inspection results.
+    /// </summary>
+    /// <param name="traceFilePath">The path to the ETW trace file.</param>
+    /// <param name="filter">An optional filter to apply to the process names and command lines.</param>
+    /// <returns>A JSON string containing the inspection results.</returns>
+    public static string Inspect(string traceFilePath, string? filter)
+    {
+        var options = new EtwUltraProfilerOptions();
+        using var converter = new EtwConverterToFirefox(traceFilePath, options);
+        return converter.Inspect(filter);
+    }
+
+    /// <summary>
+    /// Inspects the ETW trace file and returns a JSON string with the inspection results.
+    /// </summary>
+    /// <param name="filter">An optional filter to apply to the process names and command lines.</param>
+    /// <returns>A JSON string containing the inspection results.</returns>
+    public string Inspect(string? filter)
+    {
+        var inspectProfile = new InspectOutput($"{_traceLog.OSName} {_traceLog.OSVersion} {_traceLog.OSBuild}", _traceLog.EventCount, _traceLog.SessionDuration);
+
+        Dictionary<int, int> processEvents = new();
+
+        foreach (var evt in _traceLog.Events)
+        {
+            CollectionsMarshal.GetValueRefOrAddDefault(processEvents, evt.ProcessID, out _)++;
+        }
+
+        foreach (var process in _traceLog.Processes)
+        {
+            if (filter != null && !(process.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                                    || process.CommandLine.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+            var processInfo = new InspectProcessInfo(process.Name, process.ProcessID, process.CommandLine, processEvents[process.ProcessID]);
+            inspectProfile.Processes.Add(processInfo);
+        }
+
+        inspectProfile.Processes.Sort((x, y) => y.Events - x.Events);
+        return JsonSerializer.Serialize(inspectProfile, CommandInputsOutputsJsonSerializerContext.Default.InspectOutput);
+    }
+
+    /// <summary>
     /// Converts an ETW trace file to a Firefox profile.
     /// </summary>
     /// <param name="traceFilePath">The ETW trace file to convert.</param>
@@ -118,8 +163,8 @@ public sealed class EtwConverterToFirefox : IDisposable
 
     private FirefoxProfiler.Profile Convert(List<int> processIds)
     {
-        // MSNT_SystemTrace/Image/KernelBase - ThreadID="-1" ProcessorNumber="9" ImageBase="0xfffff80074000000" 
-        
+        // MSNT_SystemTrace/Image/KernelBase - ThreadID="-1" ProcessorNumber="9" ImageBase="0xfffff80074000000"
+
         // We don't have access to physical CPUs
         //profile.Meta.PhysicalCPUs = Environment.ProcessorCount / 2;
         //profile.Meta.CPUName = ""; // TBD
@@ -177,7 +222,7 @@ public sealed class EtwConverterToFirefox : IDisposable
         // Sort threads by CPU time
         var threads = process.Threads.ToList();
         threads.Sort((a, b) => b.CPUMSec.CompareTo(a.CPUMSec));
-        
+
         double maxCpuTime = threads.Count > 0 ? threads[0].CPUMSec : 0;
         int threadIndexWithMaxCpuTime = threads.Count > 0 ? _profileThreadIndex : -1;
 
@@ -210,7 +255,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                 ? $"{thread.ThreadInfo} ({thread.ThreadID})"
                 : $"Thread ({thread.ThreadID})";
             var threadName = $"{threadIndex} - {threadBaseName}";
-                
+
             var profileThread = new FirefoxProfiler.Thread
             {
                 Name = threadName,
@@ -291,11 +336,9 @@ public sealed class EtwConverterToFirefox : IDisposable
                         }
                         else if (evt is MethodLoadUnloadTraceDataBase methodLoadUnloadVerbose)
                         {
-                            if (jitCompilePendingMethodId.TryGetValue(methodLoadUnloadVerbose.MethodID,
+                            if (jitCompilePendingMethodId.Remove(methodLoadUnloadVerbose.MethodID,
                                     out var jitCompilePair))
                             {
-                                jitCompilePendingMethodId.Remove(methodLoadUnloadVerbose.MethodID);
-
                                 markers.StartTime.Add(jitCompilePair.Item2);
                                 markers.EndTime.Add(evt.TimeStampRelativeMSec);
                                 markers.Category.Add(CategoryJit);
@@ -523,7 +566,7 @@ public sealed class EtwConverterToFirefox : IDisposable
             gcHeapStatsCounter.Samples.Time!.Add(0);
             gcHeapStatsCounter.Samples.Count.Add(0);
             gcHeapStatsCounter.Samples.Length++;
-                
+
             foreach (var evt in gcHeapStatsEvents)
             {
                 gcHeapStatsCounter.Samples.Time!.Add(evt.Item1);
@@ -797,7 +840,7 @@ public sealed class EtwConverterToFirefox : IDisposable
             firefoxMethodIndex = funcTable.Length;
             _mapMethodIndexToFirefox.Add(methodIndex, firefoxMethodIndex);
         }
-        
+
         //public List<int> Name { get; }
         //public List<bool> IsJS { get; }
         //public List<bool> RelevantForJS { get; }
@@ -848,7 +891,7 @@ public sealed class EtwConverterToFirefox : IDisposable
 
         return firefoxMethodIndex;
     }
-    
+
     /// <summary>
     /// Gets or creates a string for the specified Firefox profile thread.
     /// </summary>
