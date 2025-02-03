@@ -40,7 +40,7 @@ public static partial class FirefoxProfiler
     public partial class JsonProfilerContext : JsonSerializerContext
     {
     }
-    
+
     public class StackTable
     {
         public StackTable()
@@ -276,13 +276,13 @@ public static partial class FirefoxProfiler
             DebugPath = string.Empty;
             BreakpadId = string.Empty;
         }
-        
+
         public ulong? AddressStart { get; set; }
 
         public ulong? AddressEnd { get; set; }
 
         public ulong? AddressOffset { get; set; }
-        
+
         public string Arch { get; set; }
 
         public string Name { get; set; }
@@ -1032,7 +1032,7 @@ public static partial class FirefoxProfiler
             }
         }
     }
-    
+
 
     public class MarkerTableFormatType : MarkerFormatType
     {

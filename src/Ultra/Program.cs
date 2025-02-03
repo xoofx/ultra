@@ -23,6 +23,7 @@ internal class Program
 
         bool verbose = false;
         var options = new EtwUltraProfilerOptions();
+        string? inspectFilter = null;
 
         const string _ = "";
 
@@ -82,7 +83,7 @@ internal class Program
 
                     string? fileOutput = null;
 
-                    
+
                     // Add the pid passed as options
                     options.ProcessIds.AddRange(pidList);
 
@@ -141,7 +142,7 @@ internal class Program
                             {
                                 AnsiConsole.MarkupLine($"[darkorange]Key pressed {key.Modifiers} {key.Key}[/]");
                             }
-                            
+
                             return startProfiling;
                         };
                     }
@@ -202,7 +203,7 @@ internal class Program
                         options.WaitingFileToCompleteTimeOut = (file) => { AnsiConsole.WriteLine($">>ultra::Timeout waiting for {Markup.Escape(file)} to complete"); };
                         options.ProgramLogStdout = AnsiConsole.WriteLine;
                         options.ProgramLogStderr = AnsiConsole.WriteLine;
-                        
+
                         try
                         {
                             fileOutput = await etwProfiler.Run(options);
@@ -277,7 +278,7 @@ internal class Program
                                     statusTable.UpdateTable();
                                     liveCtx.Refresh();
                                 };
-                                
+
                                 try
                                 {
                                     fileOutput = await etwProfiler.Run(options);
@@ -396,12 +397,35 @@ internal class Program
 
                     return 0;
                 }
+            },
+            new Command("inspect", "Inspects an existing ETL file")
+            {
+                new CommandUsage("Usage: {NAME} <etl_file_name.etl>"),
+                _,
+                new HelpOption(),
+                { "filter=", "Filter for the process name or command line", (string? filter) => { inspectFilter = filter; } },
+                (_, arguments) =>
+                {
+                    if (arguments.Length == 0)
+                    {
+                        AnsiConsole.MarkupLine("[red]Missing ETL file name[/]");
+                        return ValueTask.FromResult(1);
+                    }
+
+                    var etlFile = arguments[0];
+
+                    var result = EtwConverterToFirefox.Inspect(etlFile, inspectFilter);
+                    var report = new Text(result, Style.Plain);
+                    AnsiConsole.Write(report);
+
+                    return ValueTask.FromResult(0);
+                }
             }
         };
 
         var width = Console.IsOutputRedirected ? 80 : Math.Max(80, Console.WindowWidth);
         var optionWidth = Console.IsOutputRedirected || width == 80 ? 29 : 36;
-        
+
         try
         {
             return await commandApp.RunAsync(args, new CommandRunConfig(width, optionWidth));
@@ -418,7 +442,7 @@ internal class Program
             return 1;
         }
     }
-    
+
     private class StatusTable
     {
         private string? _statusText;
@@ -435,7 +459,7 @@ internal class Program
         }
 
         public Table Table { get; }
-        
+
         public void LogText(string text)
         {
             if (_logLines.Count > MaxLogLines)
@@ -445,7 +469,7 @@ internal class Program
 
             _logLines.Enqueue(text);
         }
-        
+
         public void Status(string text)
         {
             _statusText = text;
