@@ -29,6 +29,7 @@ public sealed class EtwConverterToFirefox : IDisposable
     private readonly SymbolReader _symbolReader;
     private readonly ETWTraceEventSource _etl;
     private readonly TraceLog _traceLog;
+    private readonly Dictionary<int, string> _threadNames;
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
     private int _profileThreadIndex;
@@ -93,6 +94,7 @@ public sealed class EtwConverterToFirefox : IDisposable
         _mapMethodIndexToFirefox = new();
         _mapStringToFirefox = new(StringComparer.Ordinal);
         _setManagedModules = new();
+        _threadNames = new();
     }
 
     /// <inheritdoc />
@@ -118,8 +120,18 @@ public sealed class EtwConverterToFirefox : IDisposable
 
     private FirefoxProfiler.Profile Convert(List<int> processIds)
     {
+        _etl.Kernel.ThreadSetName += (ThreadSetNameTraceData data) =>
+        {
+            if (!string.IsNullOrEmpty(data.ThreadName))
+            {
+                _threadNames[data.ThreadID] = data.ThreadName;
+            }
+        };
+        _etl.Process();
+
+
         // MSNT_SystemTrace/Image/KernelBase - ThreadID="-1" ProcessorNumber="9" ImageBase="0xfffff80074000000" 
-        
+
         // We don't have access to physical CPUs
         //profile.Meta.PhysicalCPUs = Environment.ProcessorCount / 2;
         //profile.Meta.CPUName = ""; // TBD
@@ -206,9 +218,17 @@ public sealed class EtwConverterToFirefox : IDisposable
             Stack<double> gcRestartEEEvents = new();
             Stack<(double, GCEvent)> gcStartStopEvents = new();
 
-            var threadBaseName = thread.ThreadInfo is not null
-                ? $"{thread.ThreadInfo} ({thread.ThreadID})"
-                : $"Thread ({thread.ThreadID})";
+            string threadBaseName;
+            if (!_threadNames.TryGetValue(thread.ThreadID, out var dynamicThreadName))
+            {
+                threadBaseName = thread.ThreadInfo is not null
+                    ? $"{thread.ThreadInfo} ({thread.ThreadID})"
+                    : $"Thread ({thread.ThreadID})";
+            }
+            else
+            {
+                threadBaseName = $"{dynamicThreadName} ({thread.ThreadID})";
+            }
             var threadName = $"{threadIndex} - {threadBaseName}";
                 
             var profileThread = new FirefoxProfiler.Thread
@@ -808,7 +828,11 @@ public sealed class EtwConverterToFirefox : IDisposable
 
         if (methodIndex == MethodIndex.Invalid)
         {
-            funcTable.Name.Add(GetOrCreateString($"0x{_traceLog.CodeAddresses.Address(codeAddressIndex):X16}", profileThread));
+            var module = _traceLog.CodeAddresses.ModuleFile(codeAddressIndex);
+            string? moduleName = module?.Name;
+            var absoluteAddress = _traceLog.CodeAddresses.Address(codeAddressIndex);
+
+            funcTable.Name.Add(GetOrCreateString($"{moduleName}!0x{absoluteAddress:X16}", profileThread));
             funcTable.IsJS.Add(false);
             funcTable.RelevantForJS.Add(false);
             funcTable.Resource.Add(-1);
