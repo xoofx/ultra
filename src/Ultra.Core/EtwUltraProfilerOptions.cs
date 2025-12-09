@@ -178,6 +178,13 @@ public class EtwUltraProfilerOptions
             symbolPath.Add(symbolPathText);
         }
 
+        // common to have perfview symbols in a "symbols" directory adjacent to an etl file
+        var dirInfo = new DirectoryInfo(Path.Combine(Environment.CurrentDirectory, "symbols"));
+        if (dirInfo.Exists)
+        {
+            symbolPath.Add(dirInfo.FullName);
+        }
+
         return symbolPath.InsureHasCache(symbolPath.DefaultSymbolCache()).CacheFirst();
     }
 }

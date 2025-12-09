@@ -28,10 +28,11 @@ public sealed class EtwConverterToFirefox : IDisposable
     private readonly Dictionary<MethodIndex, int> _mapMethodIndexToFirefox;
     private readonly Dictionary<string, int> _mapStringToFirefox;
     private readonly SymbolReader _symbolReader;
-    private readonly ETWTraceEventSource _etl;
+    private readonly TraceEventDispatcher _etl;
     private readonly TraceLog _traceLog;
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
+    private ModuleFileIndex _clrModuleIndex = ModuleFileIndex.Invalid; // netfw clr
     private int _profileThreadIndex;
     private readonly EtwUltraProfilerOptions _options;
     private readonly FirefoxProfiler.Profile _profile;
@@ -73,8 +74,9 @@ public sealed class EtwConverterToFirefox : IDisposable
 
     private EtwConverterToFirefox(string traceFilePath, EtwUltraProfilerOptions options)
     {
-        _etl = new ETWTraceEventSource(traceFilePath);
-        _traceLog = TraceLog.OpenOrConvert(traceFilePath);
+        _etl = TraceLogEventSource.GetDispatcherFromFileName(traceFilePath);
+        var traceLogFilePath = TraceLog.CreateFromEventTraceLogFile(_etl, Path.ChangeExtension(traceFilePath, ".etlx"));
+        _traceLog = TraceLog.OpenOrConvert(traceLogFilePath);
 
         var symbolPath = options.GetCachedSymbolPath();
         var symbolPathText = symbolPath.ToString();
@@ -144,7 +146,7 @@ public sealed class EtwConverterToFirefox : IDisposable
             inspectProfile.Processes.Add(processInfo);
         }
 
-        inspectProfile.Processes.Sort((x, y) => y.Events - x.Events);
+        inspectProfile.Processes.Sort((x, y) => x.Events.CompareTo(y.Events));
         return JsonSerializer.Serialize(inspectProfile, CommandInputsOutputsJsonSerializerContext.Default.InspectOutput);
     }
 
@@ -174,6 +176,11 @@ public sealed class EtwConverterToFirefox : IDisposable
         foreach (var processId in processIds)
         {
             var process = _traceLog.Processes.LastProcessWithID(processId);
+
+            if (process is not {})
+            {
+                throw new InvalidOperationException($"Process with ID {processId} not found in the ETL file.");
+            }
 
             ConvertProcess(process);
         }
@@ -248,6 +255,8 @@ public sealed class EtwConverterToFirefox : IDisposable
             _mapCodeAddressIndexToMethodIndexFirefox.Clear();
 
             Stack<(double, GCSuspendExecutionEngineEvent)> gcSuspendEEEvents = new();
+            Stack<(double, ContentionStartTraceData)> contentionEvents = new();
+
             Stack<double> gcRestartEEEvents = new();
             Stack<(double, GCEvent)> gcStartStopEvents = new();
 
@@ -356,7 +365,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                             markers.Category.Add(CategoryGc);
                             markers.Phase.Add(FirefoxProfiler.MarkerPhase.Instance);
                             markers.ThreadId.Add(_profileThreadIndex);
-                            markers.Name.Add(GetOrCreateString($"GCHeapStats", profileThread));
+                            markers.Name.Add(GetOrCreateString("GCHeapStats", profileThread));
 
                             var heapStatEvent = new GCHeapStatsEvent
                             {
@@ -432,7 +441,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                                 markers.Category.Add(CategoryGc);
                                 markers.Phase.Add(FirefoxProfiler.MarkerPhase.Interval);
                                 markers.ThreadId.Add(_profileThreadIndex);
-                                markers.Name.Add(GetOrCreateString($"GC Event", profileThread));
+                                markers.Name.Add(GetOrCreateString("GC Event", profileThread));
                                 markers.Data.Add(gcEvent);
                                 markers.Length++;
                             }
@@ -456,7 +465,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                                 markers.Category.Add(CategoryGc);
                                 markers.Phase.Add(FirefoxProfiler.MarkerPhase.Interval);
                                 markers.ThreadId.Add(_profileThreadIndex);
-                                markers.Name.Add(GetOrCreateString($"GC Suspend EE", profileThread));
+                                markers.Name.Add(GetOrCreateString("GC Suspend EE", profileThread));
                                 markers.Data.Add(gcSuspendEEEvent);
                                 markers.Length++;
                             }
@@ -474,8 +483,42 @@ public sealed class EtwConverterToFirefox : IDisposable
                                 markers.Category.Add(CategoryGc);
                                 markers.Phase.Add(FirefoxProfiler.MarkerPhase.Interval);
                                 markers.ThreadId.Add(_profileThreadIndex);
-                                markers.Name.Add(GetOrCreateString($"GC Restart EE", profileThread));
+                                markers.Name.Add(GetOrCreateString("GC Restart EE", profileThread));
                                 markers.Data.Add(null);
+                                markers.Length++;
+                            }
+                            else if (evt is ContentionStartTraceData contentionStartTraceData)
+                            {
+                                contentionEvents.Push((evt.TimeStampRelativeMSec, contentionStartTraceData));
+                            }
+                            else if (evt is ContentionStopTraceData contentionStopTraceData && contentionEvents.Count > 0)
+                            {
+                                var (contentionStartTime, contentionStart) = contentionEvents.Pop();
+                                markers.StartTime.Add(contentionStartTime);
+                                markers.EndTime.Add(evt.TimeStampRelativeMSec);
+                                markers.Category.Add(CategoryClr);
+                                markers.Phase.Add(FirefoxProfiler.MarkerPhase.Interval);
+                                markers.ThreadId.Add(_profileThreadIndex);
+                                markers.Name.Add(GetOrCreateString("Contention", profileThread));
+
+                                markers.Data.Add(null);
+                                markers.Length++;
+                            }
+                            else if (evt is FinalizeObjectTraceData finalizeObjectTraceData)
+                            {
+                                markers.StartTime.Add(evt.TimeStampRelativeMSec);
+                                markers.EndTime.Add(evt.TimeStampRelativeMSec);
+                                markers.Category.Add(CategoryClr);
+                                markers.Phase.Add(FirefoxProfiler.MarkerPhase.Instance);
+                                markers.ThreadId.Add(_profileThreadIndex);
+                                markers.Name.Add(GetOrCreateString("FinalizeObject", profileThread));
+
+                                var finalizeEvent = new FinalizeObjectEvent
+                                {
+                                    TypeName = finalizeObjectTraceData.TypeName,
+                                };
+
+                                markers.Data.Add(finalizeEvent);
                                 markers.Length++;
                             }
                         }
@@ -601,6 +644,7 @@ public sealed class EtwConverterToFirefox : IDisposable
         _setManagedModules.Clear();
         _clrJitModuleIndex = ModuleFileIndex.Invalid;
         _coreClrModuleIndex = ModuleFileIndex.Invalid;
+        _clrModuleIndex = ModuleFileIndex.Invalid;
 
         var allModules = process.LoadedModules.ToList();
         for (var i = 0; i < allModules.Count; i++)
@@ -622,7 +666,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                     Arch = "x64" // TODO
                 };
 
-                _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
+                _traceLog.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
 
                 _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, _profile.Libs.Count);
                 _profile.Libs.Add(lib);
@@ -637,18 +681,27 @@ public sealed class EtwConverterToFirefox : IDisposable
             {
                 _coreClrModuleIndex = module.ModuleFile.ModuleFileIndex;
             }
+            else if (fileName.Equals("clr.dll", StringComparison.OrdinalIgnoreCase))
+            {
+                _clrModuleIndex = module.ModuleFile.ModuleFileIndex;
+            }
 
             if (module is TraceManagedModule managedModule)
             {
                 _setManagedModules.Add(managedModule.ModuleFile.ModuleFileIndex);
 
-                foreach (var otherModule in allModules.Where(x => x is not TraceManagedModule))
-                {
-                    if (string.Equals(managedModule.FilePath, otherModule.FilePath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _setManagedModules.Add(otherModule.ModuleFile.ModuleFileIndex);
-                    }
-                }
+                // foreach (var otherModule in unmanagedModules)
+                // {
+                //     if (string.Equals(managedModule.FilePath, otherModule.FilePath, StringComparison.OrdinalIgnoreCase))
+                //     {
+                //         _setManagedModules.Add(otherModule.ModuleFile.ModuleFileIndex);
+                //     }
+                // }
+            }
+
+            if (module.ModuleFile is { ManagedModule: {} })
+            {
+                _setManagedModules.Add(module.ModuleFile.ModuleFileIndex);
             }
         }
     }
@@ -762,7 +815,7 @@ public sealed class EtwConverterToFirefox : IDisposable
                 {
                     category = CategoryJit;
                 }
-                else if (module.ModuleFileIndex == _coreClrModuleIndex)
+                else if (module.ModuleFileIndex == _coreClrModuleIndex || module.ModuleFileIndex == _clrModuleIndex)
                 {
                     category = CategoryClr;
                 }
@@ -770,9 +823,9 @@ public sealed class EtwConverterToFirefox : IDisposable
         }
 
         var methodIndex = _traceLog.CodeAddresses.MethodIndex(codeAddressIndex);
-        var firefoxMethodIndex = ConvertMethod(codeAddressIndex, methodIndex, profileThread);
+        var firefoxMethodIndex = ConvertMethod(codeAddressIndex, methodIndex, module, profileThread);
 
-        if (methodIndex != MethodIndex.Invalid)
+        if (methodIndex != MethodIndex.Invalid && category is CategoryNative or CategoryClr)
         {
             var nameIndex = profileThread.FuncTable.Name[firefoxMethodIndex];
             var fullMethodName = profileThread.StringArray[nameIndex];
@@ -818,7 +871,7 @@ public sealed class EtwConverterToFirefox : IDisposable
     /// <param name="methodIndex">The method index. Can be invalid.</param>
     /// <param name="profileThread">The current Firefox thread.</param>
     /// <returns>The converted Firefox method index.</returns>
-    private int ConvertMethod(CodeAddressIndex codeAddressIndex, MethodIndex methodIndex, FirefoxProfiler.Thread profileThread)
+    private int ConvertMethod(CodeAddressIndex codeAddressIndex, MethodIndex methodIndex, TraceModuleFile? traceModuleFile, FirefoxProfiler.Thread profileThread)
     {
         var funcTable = profileThread.FuncTable;
         int firefoxMethodIndex;
@@ -849,12 +902,30 @@ public sealed class EtwConverterToFirefox : IDisposable
         //public List<int?> LineNumber { get; }
         //public List<int?> ColumnNumber { get; }
 
+        string? moduleName = null;
+        if (traceModuleFile is {} && _mapModuleFileIndexToFirefox.TryGetValue(traceModuleFile.ModuleFileIndex, out var firefoxModuleIndex))
+        {
+            funcTable.Resource.Add(profileThread.ResourceTable.Length);
+
+            moduleName = Path.GetFileName(traceModuleFile.FilePath);
+            profileThread.ResourceTable.Name.Add(GetOrCreateString(moduleName, profileThread));
+            profileThread.ResourceTable.Lib.Add(firefoxModuleIndex);
+            profileThread.ResourceTable.Length++;
+        }
+        else
+        {
+            funcTable.Resource.Add(-1);
+        }
+
         if (methodIndex == MethodIndex.Invalid)
         {
-            funcTable.Name.Add(GetOrCreateString($"0x{_traceLog.CodeAddresses.Address(codeAddressIndex):X16}", profileThread));
+            var name = moduleName is {}
+                ? $"({moduleName}) 0x{_traceLog.CodeAddresses.Address(codeAddressIndex):X16}"
+                : $"0x{_traceLog.CodeAddresses.Address(codeAddressIndex):X16}";
+
+            funcTable.Name.Add(GetOrCreateString(name, profileThread));
             funcTable.IsJS.Add(false);
             funcTable.RelevantForJS.Add(false);
-            funcTable.Resource.Add(-1);
             funcTable.FileName.Add(null);
             funcTable.LineNumber.Add(null);
             funcTable.ColumnNumber.Add(null);
@@ -870,21 +941,6 @@ public sealed class EtwConverterToFirefox : IDisposable
             funcTable.FileName.Add(null); // TODO
             funcTable.LineNumber.Add(null);
             funcTable.ColumnNumber.Add(null);
-
-            var moduleIndex = _traceLog.CodeAddresses.ModuleFileIndex(codeAddressIndex);
-            if (moduleIndex != ModuleFileIndex.Invalid && _mapModuleFileIndexToFirefox.TryGetValue(moduleIndex, out var firefoxModuleIndex))
-            {
-                funcTable.Resource.Add(profileThread.ResourceTable.Length);
-
-                var moduleName = Path.GetFileName(_traceLog.ModuleFiles[moduleIndex].FilePath);
-                profileThread.ResourceTable.Name.Add(GetOrCreateString(moduleName, profileThread));
-                profileThread.ResourceTable.Lib.Add(firefoxModuleIndex);
-                profileThread.ResourceTable.Length++;
-            }
-            else
-            {
-                funcTable.Resource.Add(-1);
-            }
         }
 
         funcTable.Length++;
@@ -1018,6 +1074,8 @@ public sealed class EtwConverterToFirefox : IDisposable
                     GCAllocationTickEvent.Schema(),
                     GCSuspendExecutionEngineEvent.Schema(),
                     GCRestartExecutionEngineEvent.Schema(),
+                    ContentionEvent.Schema(),
+                    FinalizeObjectEvent.Schema()
                 }
             }
         };
