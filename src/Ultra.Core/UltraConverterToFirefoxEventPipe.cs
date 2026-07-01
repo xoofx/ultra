@@ -4,6 +4,7 @@
 
 using System.Runtime.InteropServices;
 using Microsoft.Diagnostics.Tracing;
+using Ultra.Core.MachO;
 using Ultra.Core.Markers;
 using Ultra.Core.Model;
 
@@ -26,6 +27,9 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
     private readonly Dictionary<UTraceModuleFile, int> _mapModuleFileToResourceFirefox = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, int> _mapStringToFirefox = new(StringComparer.Ordinal);
     private readonly Dictionary<UTraceModuleFileIndex, int> _mapModuleFileIndexToFirefox = new();
+    private readonly Dictionary<UTraceModuleFile, MachOSymbolReader?> _mapModuleFileToSymbolReader = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<(UTraceModuleFileIndex, ulong), int> _mapNativeSymbolToFirefox = new();
+    private readonly HashSet<string> _mangledNames = new(StringComparer.Ordinal);
 
     private UTraceModuleFileIndex _clrJitModuleIndex = UTraceModuleFileIndex.Invalid;
     private UTraceModuleFileIndex _coreClrModuleIndex = UTraceModuleFileIndex.Invalid;
@@ -95,6 +99,39 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
                 }
             }
         }
+
+        DemangleNativeSymbols();
+    }
+
+    /// <summary>
+    /// Demangles the collected C++ mangled names in all the threads (when c++filt is available).
+    /// </summary>
+    private void DemangleNativeSymbols()
+    {
+        if (_mangledNames.Count == 0)
+        {
+            return;
+        }
+
+        Options.LogProgress?.Invoke($"Demangling {_mangledNames.Count} native symbols");
+
+        var demangled = CppDemangler.Demangle(_mangledNames);
+        if (demangled is null)
+        {
+            return;
+        }
+
+        foreach (var thread in ProfilerResult.Threads)
+        {
+            var stringArray = thread.StringArray;
+            for (var i = 0; i < stringArray.Count; i++)
+            {
+                if (demangled.TryGetValue(stringArray[i], out var demangledName))
+                {
+                    stringArray[i] = demangledName;
+                }
+            }
+        }
     }
 
     private void ConvertProcess(UTraceSession session, UTraceProcess process)
@@ -149,6 +186,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
             _mapManagedMethodToFirefox.Clear();
             _mapModuleFileToResourceFirefox.Clear();
             _mapStringToFirefox.Clear();
+            _mapNativeSymbolToFirefox.Clear();
 
             var threadBaseName = string.IsNullOrEmpty(thread.Name)
                 ? $"Thread ({thread.ThreadID})"
@@ -430,7 +468,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
             }
 
             frameAddress = (int)(address - nativeModule.BaseAddress).Value;
-            firefoxFuncIndex = ConvertNativeAddress(address, nativeModule, profileThread);
+            firefoxFuncIndex = ConvertNativeAddress(address, nativeModule, profileThread, ref category);
         }
         else
         {
@@ -491,18 +529,57 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
     }
 
     /// <summary>
-    /// Converts a native address to a Firefox func.
+    /// Converts a native address to a Firefox func, using the symbols of the module when available.
     /// </summary>
-    private int ConvertNativeAddress(UAddress address, UTraceNativeModule nativeModule, FirefoxProfiler.Thread profileThread)
+    private int ConvertNativeAddress(UAddress address, UTraceNativeModule nativeModule, FirefoxProfiler.Thread profileThread, ref int category)
     {
+        var moduleFile = nativeModule.ModuleFile;
+
+        if (!_mapModuleFileToSymbolReader.TryGetValue(moduleFile, out var symbolReader))
+        {
+            MachOSymbolReader.TryRead(moduleFile.FilePath, out symbolReader);
+            _mapModuleFileToSymbolReader.Add(moduleFile, symbolReader);
+        }
+
+        string funcName;
+        if (symbolReader is not null && symbolReader.TryResolve(nativeModule.BaseAddress, address, out var symbol))
+        {
+            funcName = symbol.Name;
+
+            // Hack to distinguish GC methods
+            // https://github.com/dotnet/runtime/blob/af3393d3991b7aab608e514e4a4be3ae2bbafbf8/src/coreclr/gc/gc.cpp#L49-L53
+            // The mangled name of e.g. WKS::gc_heap::garbage_collect is __ZN3WKS7gc_heap15garbage_collectEi
+            if (moduleFile.Index == _coreClrModuleIndex &&
+                (funcName.StartsWith("__ZN3WKS", StringComparison.Ordinal) || funcName.StartsWith("__ZN3SVR", StringComparison.Ordinal)))
+            {
+                category = CategoryGc;
+            }
+
+            if (CppDemangler.IsMangled(funcName))
+            {
+                _mangledNames.Add(funcName);
+            }
+
+            // Dedupe funcs per symbol so that samples in the same function aggregate in the call tree
+            if (_mapNativeSymbolToFirefox.TryGetValue((moduleFile.Index, symbol.Address), out var index))
+            {
+                return index;
+            }
+            _mapNativeSymbolToFirefox.Add((moduleFile.Index, symbol.Address), profileThread.FuncTable.Length);
+        }
+        else
+        {
+            var moduleName = Path.GetFileName(moduleFile.FilePath);
+            funcName = $"{moduleName}!0x{address.Value:X16}";
+        }
+
         var funcTable = profileThread.FuncTable;
         var firefoxFuncIndex = funcTable.Length;
 
-        var moduleName = Path.GetFileName(nativeModule.ModuleFile.FilePath);
-        funcTable.Name.Add(GetOrCreateString($"{moduleName}!0x{address.Value:X16}", profileThread));
+        funcTable.Name.Add(GetOrCreateString(funcName, profileThread));
         funcTable.IsJS.Add(false);
         funcTable.RelevantForJS.Add(false);
-        funcTable.Resource.Add(GetOrCreateResource(nativeModule.ModuleFile, profileThread));
+        funcTable.Resource.Add(GetOrCreateResource(moduleFile, profileThread));
         funcTable.FileName.Add(null);
         funcTable.LineNumber.Add(null);
         funcTable.ColumnNumber.Add(null);
