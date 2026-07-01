@@ -22,7 +22,7 @@ internal class Program
         List<int> pidList = new();
 
         bool verbose = false;
-        var options = new EtwUltraProfilerOptions();
+        var options = new UltraProfilerOptions();
 
         const string _ = "";
 
@@ -53,15 +53,15 @@ internal class Program
                     {
                         if ("raw".Equals(v, StringComparison.OrdinalIgnoreCase))
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Raw;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Raw;
                         }
                         else if ("live".Equals(v, StringComparison.OrdinalIgnoreCase))
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Live;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Live;
                         }
                         else
                         {
-                            options.ConsoleMode = EtwUltraProfilerConsoleMode.Silent;
+                            options.ConsoleMode = UltraProfilerConsoleMode.Silent;
                         }
                     }
                 },
@@ -74,13 +74,13 @@ internal class Program
                         return 1;
                     }
 
-                    if (!EtwUltraProfiler.IsElevated())
+                    if (!UltraProfiler.IsElevated())
                     {
                         AnsiConsole.MarkupLine("[darkorange]This command requires to run with administrator rights[/]");
                         return 1;
                     }
 
-                    string? fileOutput = null;
+                    string? jsonGzOutput = null;
 
                     
                     // Add the pid passed as options
@@ -100,7 +100,7 @@ internal class Program
 
                     options.EnsureDirectoryForBaseOutputFileName();
 
-                    var etwProfiler = new EtwUltraProfiler();
+                    var etwProfiler = UltraProfiler.Create();
 
                     Console.CancelKeyPress += (sender, eventArgs) =>
                     {
@@ -146,7 +146,7 @@ internal class Program
                         };
                     }
 
-                    if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Silent)
+                    if (options.ConsoleMode == UltraProfilerConsoleMode.Silent)
                     {
                         await AnsiConsole.Status()
                             .Spinner(Spinner.Known.Default)
@@ -180,7 +180,7 @@ internal class Program
 
                                     try
                                     {
-                                        fileOutput = await etwProfiler.Run(options);
+                                        jsonGzOutput = await etwProfiler.Run(options);
                                     }
                                     finally
                                     {
@@ -194,7 +194,7 @@ internal class Program
                                 }
                             );
                     }
-                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Raw)
+                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Raw)
                     {
                         options.LogStepProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
                         options.LogProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
@@ -205,14 +205,14 @@ internal class Program
                         
                         try
                         {
-                            fileOutput = await etwProfiler.Run(options);
+                            jsonGzOutput = await etwProfiler.Run(options);
                         }
                         finally
                         {
                             etwProfiler.Dispose();
                         }
                     }
-                    else if (options.ConsoleMode == EtwUltraProfilerConsoleMode.Live)
+                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Live)
                     {
                         var statusTable = new StatusTable();
 
@@ -280,7 +280,7 @@ internal class Program
                                 
                                 try
                                 {
-                                    fileOutput = await etwProfiler.Run(options);
+                                    jsonGzOutput = await etwProfiler.Run(options);
                                 }
                                 finally
                                 {
@@ -290,18 +290,18 @@ internal class Program
                         );
                     }
 
-                    if (fileOutput != null)
+                    if (jsonGzOutput != null)
                     {
-                        AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{fileOutput}[/] - {ByteSize.FromBytes(new FileInfo(fileOutput).Length)}");
+                        AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{jsonGzOutput}[/] - {ByteSize.FromBytes(new FileInfo(jsonGzOutput).Length)}");
                         AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
                     }
 
                     return 0;
                 }
             },
-            new Command("convert", "Convert an existing ETL file to a Firefox Profiler json file")
+            new Command("convert", "Convert an existing trace file (one ETL file or a list of nettrace files) to a Firefox Profiler json file")
             {
-                new CommandUsage("Usage: {NAME} --pid xxx <etl_file_name.etl>"),
+                new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <file1_sampler.nettrace> <file1_main.nettrace>]"),
                 _,
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
@@ -313,7 +313,7 @@ internal class Program
 
                     if (arguments.Length == 0)
                     {
-                        AnsiConsole.MarkupLine("[red]Missing ETL file name[/]");
+                        AnsiConsole.MarkupLine("[red]Missing trace file name[/]");
                         return 1;
                     }
 
@@ -323,7 +323,7 @@ internal class Program
                         return 1;
                     }
 
-                    var etlFile = arguments[0];
+                    
 
                     string? fileOutput = null;
 
@@ -356,7 +356,7 @@ internal class Program
                                     previousText = text;
                                 };
 
-                                var etwProfiler = new EtwUltraProfiler();
+                                var etwProfiler = UltraProfiler.Create();
                                 try
                                 {
                                     Console.CancelKeyPress += (sender, eventArgs) =>
@@ -373,7 +373,20 @@ internal class Program
 
                                     options.EnsureDirectoryForBaseOutputFileName();
 
-                                    fileOutput = await etwProfiler.Convert(etlFile, pidList, options);
+                                    var traceFiles = arguments.Select(x => new UltraProfilerTraceFile(x)).ToList();
+
+                                    // Try to recover the base name from the first trace file
+                                    string baseName = Path.GetFileNameWithoutExtension(traceFiles[0].FileName);
+                                    if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler)) // nettrace
+                                    {
+                                        baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameSampler.Length);
+                                    }
+                                    else if (baseName.EndsWith(UltraProfiler.NettracePostfixNameClr)) // nettrace
+                                    {
+                                        baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameClr.Length);
+                                    }
+                                    
+                                    fileOutput = await etwProfiler.Convert(baseName, traceFiles, pidList, options);
                                 }
                                 finally
                                 {

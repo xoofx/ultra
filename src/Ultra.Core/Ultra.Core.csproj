@@ -6,7 +6,7 @@
     <IsPackable>true</IsPackable>
 
     <!-- Enable AOT analyzers -->
-    <IsAotCompatible>true</IsAotCompatible>
+    <!--<IsAotCompatible>true</IsAotCompatible>-->
   </PropertyGroup>
 
   <PropertyGroup>
@@ -24,6 +24,7 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -38,5 +39,21 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Ultra.Sampler\libUltraSampler.dylib">
+      <Link>libUltraSampler.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\Ultra.Sampler\libUltraSamplerHook.dylib">
+      <Link>libUltraSamplerHook.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
+    <InternalsVisibleTo Include="Ultra.Tests" />
   </ItemGroup>
 </Project>

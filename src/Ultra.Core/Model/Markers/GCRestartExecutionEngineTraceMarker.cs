@@ -2,13 +2,9 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
-using Ultra.Core;
-
-namespace Ultra.Tests;
+namespace Ultra.Core.Model;
 
 /// <summary>
-/// No tests for <see cref="EtwUltraProfiler"/> for now as it requires running as admin.
+/// Represents an event that indicates the .NET garbage collector has restarted the execution engine.
 /// </summary>
-public class EtwUltraProfilerTests : VerifyBase
-{
-}
+public sealed record GCRestartExecutionEngineTraceMarker : UTraceMarker;

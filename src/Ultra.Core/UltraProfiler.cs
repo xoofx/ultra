@@ -4,34 +4,65 @@
 
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using ByteSizeLib;
-using Microsoft.Diagnostics.Tracing;
-using Microsoft.Diagnostics.Tracing.Parsers;
-using Microsoft.Diagnostics.Tracing.Parsers.Clr;
-using Microsoft.Diagnostics.Tracing.Session;
 
 namespace Ultra.Core;
 
 /// <summary>
 /// A profiler that uses Event Tracing for Windows (ETW) to collect performance data.
 /// </summary>
-public class EtwUltraProfiler : IDisposable
+public abstract class UltraProfiler : IDisposable
 {
-    private TraceEventSession? _userSession;
-    private TraceEventSession? _kernelSession;
-    private bool _cancelRequested;
-    private ManualResetEvent? _cleanCancel;
-    private bool _stopRequested;
-    private readonly Stopwatch _profilerClock;
-    private TimeSpan _lastTimeProgress;
+    private protected bool CancelRequested;
+    private protected ManualResetEvent? CleanCancel;
+    private protected bool StopRequested;
+    private protected readonly Stopwatch ProfilerClock;
+    private protected TimeSpan LastTimeProgress;
+    private readonly CancellationTokenSource _cancellationTokenSource;
+    private bool _disposed;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="EtwUltraProfiler"/> class.
+    /// The postfix name for the sampler events for a nettrace file.
     /// </summary>
-    public EtwUltraProfiler()
+    public const string NettracePostfixNameSampler = "_sampler";
+
+    /// <summary>
+    /// The postfix name for the CLR events for a nettrace file.
+    /// </summary>
+    public const string NettracePostfixNameClr = "_clr";
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
+    /// </summary>
+    private protected UltraProfiler()
     {
-        _profilerClock = new Stopwatch();
+        ProfilerClock = new Stopwatch();
+        _cancellationTokenSource = new CancellationTokenSource();
+    }
+
+    private protected CancellationToken CancellationToken => _cancellationTokenSource.Token;
+
+    /// <summary>
+    /// Creates a new instance of the <see cref="UltraProfiler"/> class.
+    /// </summary>
+    /// <returns>A new instance of the <see cref="UltraProfiler"/> class.</returns>
+    /// <exception cref="PlatformNotSupportedException">Thrown when the current platform is not supported.</exception>
+    public static UltraProfiler Create()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new UltraProfilerEtw();
+        }
+
+        if (OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            return new UltraProfilerEventPipe();
+        }
+
+        throw new PlatformNotSupportedException("Only Windows or macOS+ARM64 are supported");
     }
 
     /// <summary>
@@ -40,15 +71,18 @@ public class EtwUltraProfiler : IDisposable
     /// <returns>True if the profiling session was already canceled; otherwise, false.</returns>
     public bool Cancel()
     {
-        if (!_cancelRequested)
+        if (!CancelRequested)
         {
-            _cleanCancel = new ManualResetEvent(false);
-            _cancelRequested = true;
+            CleanCancel = new ManualResetEvent(false);
+            CancelRequested = true;
             return false;
         }
         else
         {
-            _stopRequested = true;
+            StopRequested = true;
+
+            // Make sure that we cancel any pending operations
+            _cancellationTokenSource.Cancel();
 
             // Before really canceling, wait for the clean cancel to be done
             WaitForCleanCancel();
@@ -57,17 +91,20 @@ public class EtwUltraProfiler : IDisposable
     }
 
     /// <summary>
-    /// Releases all resources used by the <see cref="EtwUltraProfiler"/> class.
+    /// Releases all resources used by the <see cref="UltraProfiler"/> class.
     /// </summary>
     public void Dispose()
     {
-        _userSession?.Dispose();
-        _userSession = null;
-        _kernelSession?.Dispose();
-        _kernelSession = null;
-        _cleanCancel?.Dispose();
-        _cleanCancel = null;
+        if (_disposed) return;
+        _disposed = true;
+
+        DisposeImpl();
+        _cancellationTokenSource.Dispose();
+        CleanCancel?.Dispose();
+        CleanCancel = null;
     }
+
+    private protected abstract void DisposeImpl();
 
     /// <summary>
     /// Determines whether the current process is running with elevated privileges.
@@ -75,7 +112,14 @@ public class EtwUltraProfiler : IDisposable
     /// <returns>True if the current process is running with elevated privileges; otherwise, false.</returns>
     public static bool IsElevated()
     {
-        var isElevated = TraceEventSession.IsElevated();
+        if (OperatingSystem.IsMacOS()) return true;
+
+        return IsElevatedWindows();
+    }
+
+    private static bool IsElevatedWindows()
+    {
+        var isElevated = Microsoft.Diagnostics.Tracing.Session.TraceEventSession.IsElevated();
         return isElevated.HasValue && isElevated.Value;
     }
 
@@ -86,7 +130,7 @@ public class EtwUltraProfiler : IDisposable
     /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
     /// <exception cref="ArgumentException">Thrown when the options are invalid.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a cancel request is received.</exception>
-    public async Task<string> Run(EtwUltraProfilerOptions ultraProfilerOptions)
+    public async Task<string> Run(UltraProfilerOptions ultraProfilerOptions)
     {
         if (ultraProfilerOptions.Paused && ultraProfilerOptions.ShouldStartProfiling is null)
         {
@@ -136,7 +180,7 @@ public class EtwUltraProfiler : IDisposable
         }
         else if (ultraProfilerOptions.ProgramPath != null)
         {
-            if (!ultraProfilerOptions.ProgramPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            if (OperatingSystem.IsWindows() && !ultraProfilerOptions.ProgramPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException($"Executable path {ultraProfilerOptions.ProgramPath} must end with .exe");
             }
@@ -153,47 +197,20 @@ public class EtwUltraProfiler : IDisposable
             baseName = $"{baseName}_pid_{singleProcess.Id}";
         }
 
-        var options = new TraceEventProviderOptions()
-        {
-            StacksEnabled = true,
-        };
+        ProfilerClock.Restart();
+        LastTimeProgress = ProfilerClock.Elapsed;
 
-        // Filter the requested process ids
-        if (processList.Count > 0)
-        {
-            options.ProcessIDFilter = new List<int>();
-            foreach (var process in processList)
-            {
-                options.ProcessIDFilter.Add(process.Id);
-            }
-        }
-
-        // Make sure to filter the process name if we have a single process
-        if (ultraProfilerOptions.ProgramPath != null)
-        {
-            options.ProcessNameFilter = [Path.GetFileName(ultraProfilerOptions.ProgramPath)];
-        }
-
-        var kernelFileName = $"{baseName}.kernel.etl";
-        var userFileName = $"{baseName}.user.etl";
-
-        _profilerClock.Restart();
-        _lastTimeProgress = _profilerClock.Elapsed;
-
-        _userSession = new TraceEventSession($"{baseName}-user", userFileName);
-        _kernelSession = new TraceEventSession($"{baseName}-kernel", kernelFileName);
-
+        var runner = CreateRunner(ultraProfilerOptions, processList, baseName, singleProcess);
         try
         {
-            using (_userSession)
-            using (_kernelSession)
+            await runner.OnStart();
             {
-                var startTheRequestedProgramIfRequired = () =>
+                var startTheRequestedProgramIfRequired = async () =>
                 {
                     // Start a command line process if needed
                     if (ultraProfilerOptions.ProgramPath is not null)
                     {
-                        var processState = StartProcess(ultraProfilerOptions);
+                        var processState = await StartProcess(runner, ultraProfilerOptions);
                         processList.Add(processState.Process);
                         // Append the pid for a single process that we are attaching to
                         if (singleProcess is null)
@@ -206,32 +223,33 @@ public class EtwUltraProfiler : IDisposable
                 };
 
                 // If we have a delay, or we are asked to start paused, we start the process before the profiling starts
-                bool hasExplicitProgramHasStarted = ultraProfilerOptions.DelayInSeconds != 0.0 || ultraProfilerOptions.Paused;
+                // On macOS we always need to start the program before enabling profiling
+                bool hasExplicitProgramHasStarted = ultraProfilerOptions.DelayInSeconds != 0.0 || ultraProfilerOptions.Paused || OperatingSystem.IsMacOS();
                 if (hasExplicitProgramHasStarted)
                 {
-                    startTheRequestedProgramIfRequired();
+                    await startTheRequestedProgramIfRequired();
                 }
 
                 // Wait for the process to start
                 if (ultraProfilerOptions.Paused)
                 {
-                    while (!ultraProfilerOptions.ShouldStartProfiling!() && !_cancelRequested && !_stopRequested)
+                    while (!ultraProfilerOptions.ShouldStartProfiling!() && !CancelRequested && !StopRequested)
                     {
                     }
 
                     // If we have a cancel request, we don't start the profiling
-                    if (_cancelRequested || _stopRequested)
+                    if (CancelRequested || StopRequested)
                     {
                         throw new InvalidOperationException("CTRL+C requested");
                     }
                 }
 
-                await EnableProfiling(options, ultraProfilerOptions);
+                await EnableProfiling(runner, ultraProfilerOptions);
 
                 // If we haven't started the program yet, we start it now (for explicit program path)
                 if (!hasExplicitProgramHasStarted)
                 {
-                    startTheRequestedProgramIfRequired();
+                    await startTheRequestedProgramIfRequired();
                 }
 
                 foreach (var process in processList)
@@ -241,25 +259,23 @@ public class EtwUltraProfiler : IDisposable
 
                 // Collect the data until all processes have exited or there is a cancel request
                 HashSet<Process> exitedProcessList = new();
-                while (!_cancelRequested)
+                while (!CancelRequested)
                 {
                     // Exit if we have reached the duration
-                    if (_profilerClock.Elapsed.TotalSeconds > ultraProfilerOptions.DurationInSeconds)
+                    if (ProfilerClock.Elapsed.TotalSeconds > ultraProfilerOptions.DurationInSeconds)
                     {
                         ultraProfilerOptions.LogProgress?.Invoke($"Stopping profiling, max duration reached at {ultraProfilerOptions.DurationInSeconds}s");
                         break;
                     }
 
-                    if (_profilerClock.Elapsed.TotalMilliseconds - _lastTimeProgress.TotalMilliseconds > ultraProfilerOptions.UpdateLogAfterInMs)
+                    if (ProfilerClock.Elapsed.TotalMilliseconds - LastTimeProgress.TotalMilliseconds > ultraProfilerOptions.UpdateLogAfterInMs)
                     {
-                        var userFileNameLength = new FileInfo(userFileName).Length;
-                        var kernelFileNameLength = new FileInfo(kernelFileName).Length;
-                        var totalFileNameLength = userFileNameLength + kernelFileNameLength;
+                        var totalFileNameLength = runner.OnProfiling();
 
                         ultraProfilerOptions.LogStepProgress?.Invoke(singleProcess is not null
-                            ? $"Profiling Process {singleProcess.ProcessName} ({singleProcess.Id}) - {(int)_profilerClock.Elapsed.TotalSeconds}s - {ByteSize.FromBytes(totalFileNameLength)}"
-                            : $"Profiling {processList.Count} Processes - {(int)_profilerClock.Elapsed.TotalSeconds}s - {ByteSize.FromBytes(totalFileNameLength)}");
-                        _lastTimeProgress = _profilerClock.Elapsed;
+                            ? $"Profiling Process {singleProcess.ProcessName} ({singleProcess.Id}) - {(int)ProfilerClock.Elapsed.TotalSeconds}s - {ByteSize.FromBytes(totalFileNameLength)}"
+                            : $"Profiling {processList.Count} Processes - {(int)ProfilerClock.Elapsed.TotalSeconds}s - {ByteSize.FromBytes(totalFileNameLength)}");
+                        LastTimeProgress = ProfilerClock.Elapsed;
                     }
 
                     await Task.Delay(ultraProfilerOptions.CheckDeltaTimeInMs);
@@ -279,120 +295,62 @@ public class EtwUltraProfiler : IDisposable
 
                 } // Needed for JIT Compile code that was already compiled.
 
-                _kernelSession.Stop();
-                _userSession.Stop();
-
                 ultraProfilerOptions.LogProgress?.Invoke(singleProcess is not null ? $"End Profiling Process" : $"End Profiling {processList.Count} Processes");
 
-                await WaitForStaleFile(userFileName, ultraProfilerOptions);
-                await WaitForStaleFile(kernelFileName, ultraProfilerOptions);
+                await runner.OnStop();
             }
         }
         catch
         {
-            // Delete intermediate files if we have an exception
-            File.Delete(kernelFileName);
-            File.Delete(userFileName);
+            await runner.OnCatch();
             throw;
         }
         finally
         {
-            _userSession = null;
-            _kernelSession = null;
-            _cleanCancel?.Set();
+            await runner.OnFinally();
+            CleanCancel?.Set();
         }
 
-        if (_stopRequested)
+        if (StopRequested)
         {
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        var rundownSession = $"{baseName}.rundown.etl";
-        using (TraceEventSession clrRundownSession = new TraceEventSession($"{baseName}-rundown", rundownSession))
+        var traceFiles = await runner.FinishFileToConvert();
+
+        string jsonFinalFile = string.Empty;
+        if (traceFiles.Count > 9)
         {
-            clrRundownSession.StopOnDispose = true;
-            clrRundownSession.CircularBufferMB = 0;
-
-            ultraProfilerOptions.LogProgress?.Invoke($"Running CLR Rundown");
-
-            // The runtime does method rundown first then the module rundown.  This means if you have a large
-            // number of methods and method rundown does not complete you don't get ANYTHING.   To avoid this
-            // we first trigger all module (loader) rundown and then trigger the method rundown
-            clrRundownSession.EnableProvider(
-                ClrRundownTraceEventParser.ProviderGuid,
-                TraceEventLevel.Verbose,
-                (ulong)(ClrRundownTraceEventParser.Keywords.Loader | ClrRundownTraceEventParser.Keywords.ForceEndRundown), options);
-
-            await Task.Delay(500);
-
-            clrRundownSession.EnableProvider(
-                ClrRundownTraceEventParser.ProviderGuid,
-                TraceEventLevel.Verbose,
-                (ulong)(ClrRundownTraceEventParser.Keywords.Default & ~ClrRundownTraceEventParser.Keywords.Loader), options);
-
-            await WaitForStaleFile(rundownSession, ultraProfilerOptions);
+            jsonFinalFile = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
         }
 
-        if (_stopRequested)
-        {
-            throw new InvalidOperationException("CTRL+C requested");
-        }
-
-        ultraProfilerOptions.LogProgress?.Invoke($"Merging ETL Files");
-        // Merge file (and to force Volume mapping)
-        var etlFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseName}.etl";
-        TraceEventSession.Merge([kernelFileName, userFileName, rundownSession], etlFinalFile);
-        //TraceEventSession.Merge([kernelFileName, userFileName], $"{baseName}.etl");
-
-        if (_stopRequested)
-        {
-            throw new InvalidOperationException("CTRL+C requested");
-        }
-
-        if (!ultraProfilerOptions.KeepEtlIntermediateFiles)
-        {
-            File.Delete(kernelFileName);
-            File.Delete(userFileName);
-            File.Delete(rundownSession);
-        }
-
-        if (_stopRequested)
-        {
-            throw new InvalidOperationException("CTRL+C requested");
-        }
-
-        var jsonFinalFile = await Convert(etlFinalFile, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
-
-        if (!ultraProfilerOptions.KeepMergedEtl)
-        {
-            File.Delete(etlFinalFile);
-            var etlxFinalFile = Path.ChangeExtension(etlFinalFile, ".etlx");
-            File.Delete(etlxFinalFile);
-        }
+        await runner.OnFinalCleanup();
 
         return jsonFinalFile;
     }
 
+
+    private protected abstract ProfilerRunner CreateRunner(UltraProfilerOptions ultraProfilerOptions, List<Process> processList, string baseName, Process? singleProcess);
+
     /// <summary>
     /// Converts the ETL file to a compressed JSON file in the Firefox Profiler format.
     /// </summary>
-    /// <param name="etlFile">The path to the ETL file.</param>
+    /// <param name="baseFileNameOutput">The base name of the output file.</param>
+    /// <param name="traceFiles">The list of trace files to include in the conversion.</param>
     /// <param name="pIds">The list of process IDs to include in the conversion.</param>
     /// <param name="ultraProfilerOptions">The options for the profiler.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
     /// <exception cref="InvalidOperationException">Thrown when a stop request is received.</exception>
-    public async Task<string> Convert(string etlFile, List<int> pIds, EtwUltraProfilerOptions ultraProfilerOptions)
+    public async Task<string> Convert(string baseFileNameOutput, List<UltraProfilerTraceFile> traceFiles, List<int> pIds, UltraProfilerOptions ultraProfilerOptions)
     {
-        var profile = EtwConverterToFirefox.Convert(etlFile, ultraProfilerOptions, pIds);
+        var profile = UltraConverterToFirefox.Convert(traceFiles, ultraProfilerOptions, pIds);
 
-        if (_stopRequested)
+        if (StopRequested)
         {
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        var directory = Path.GetDirectoryName(etlFile);
-        var etlFileNameWithoutExtension = Path.GetFileNameWithoutExtension(etlFile);
-        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? etlFileNameWithoutExtension}.json.gz";
+        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseFileNameOutput}.json.gz";
         ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
         await using var stream = File.Create(jsonFinalFile);
         await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
@@ -402,22 +360,22 @@ public class EtwUltraProfiler : IDisposable
         return jsonFinalFile;
     }
 
-    private async Task EnableProfiling(TraceEventProviderOptions options, EtwUltraProfilerOptions ultraProfilerOptions)
+    private async Task EnableProfiling(ProfilerRunner runner, UltraProfilerOptions ultraProfilerOptions)
     {
-        _profilerClock.Restart();
-        while (!_cancelRequested)
+        ProfilerClock.Restart();
+        while (!CancelRequested)
         {
-            var deltaInSecondsBeforeProfilingCanStart = ultraProfilerOptions.DelayInSeconds - _profilerClock.Elapsed.TotalSeconds;
+            var deltaInSecondsBeforeProfilingCanStart = ultraProfilerOptions.DelayInSeconds - ProfilerClock.Elapsed.TotalSeconds;
 
             if (deltaInSecondsBeforeProfilingCanStart <= 0)
             {
                 break;
             }
 
-            if (_profilerClock.Elapsed.TotalMilliseconds - _lastTimeProgress.TotalMilliseconds > ultraProfilerOptions.UpdateLogAfterInMs)
+            if (ProfilerClock.Elapsed.TotalMilliseconds - LastTimeProgress.TotalMilliseconds > ultraProfilerOptions.UpdateLogAfterInMs)
             {
                 ultraProfilerOptions.LogStepProgress?.Invoke($"Delay before starting the profiler {deltaInSecondsBeforeProfilingCanStart:0.0}s");
-                _lastTimeProgress = _profilerClock.Elapsed;
+                LastTimeProgress = ProfilerClock.Elapsed;
             }
 
             // We don't handle the case of the process being killed during the delay
@@ -429,52 +387,18 @@ public class EtwUltraProfiler : IDisposable
         }
 
         // In case of a cancel request during the delay, we assume that it is a CTRL+C and not a stop of the profiler, as we haven't started profiling yet
-        if (_cancelRequested)
+        if (CancelRequested)
         {
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        _kernelSession!.StopOnDispose = true;
-        _kernelSession.CircularBufferMB = 0;
-        _kernelSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
-        _kernelSession.StackCompression = false;
-
-        _userSession!.StopOnDispose = true;
-        _userSession.CircularBufferMB = 0;
-        _userSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
-        _userSession.StackCompression = false;
-
-        var kernelEvents = KernelTraceEventParser.Keywords.Profile
-                           | KernelTraceEventParser.Keywords.ContextSwitch
-                           | KernelTraceEventParser.Keywords.ImageLoad
-                           | KernelTraceEventParser.Keywords.Process
-                           | KernelTraceEventParser.Keywords.Thread;
-        _kernelSession.EnableKernelProvider(kernelEvents, KernelTraceEventParser.Keywords.Profile);
-
-        var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
-                        ClrTraceEventParser.Keywords.Exception |
-                        ClrTraceEventParser.Keywords.GC |
-                        ClrTraceEventParser.Keywords.GCHeapAndTypeNames |
-                        ClrTraceEventParser.Keywords.Interop |
-                        ClrTraceEventParser.Keywords.JITSymbols |
-                        ClrTraceEventParser.Keywords.Jit |
-                        ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
-                        ClrTraceEventParser.Keywords.Loader |
-                        ClrTraceEventParser.Keywords.Stack |
-                        ClrTraceEventParser.Keywords.StartEnumeration;
-
-        _userSession.EnableProvider(
-            ClrTraceEventParser.ProviderGuid,
-            TraceEventLevel.Verbose, // For call stacks.
-            (ulong)jitEvents, options);
-
+        await runner.OnEnablingProfiling();
 
         // Reset the clock to account for the duration of the profiler
-        _profilerClock.Restart();
+        ProfilerClock.Restart();
     }
 
-
-    private async Task WaitForStaleFile(string file, EtwUltraProfilerOptions options)
+    private protected async Task WaitForStaleFile(string file, UltraProfilerOptions options)
     {
         var clock = Stopwatch.StartNew();
         var startTime = clock.ElapsedMilliseconds;
@@ -511,7 +435,7 @@ public class EtwUltraProfiler : IDisposable
         }
     }
 
-    private static ProcessState StartProcess(EtwUltraProfilerOptions ultraProfilerOptions)
+    private protected static async Task<ProcessState> StartProcess(ProfilerRunner runner, UltraProfilerOptions ultraProfilerOptions)
     {
         var mode = ultraProfilerOptions.ConsoleMode;
 
@@ -527,11 +451,16 @@ public class EtwUltraProfiler : IDisposable
 
         ultraProfilerOptions.LogProgress?.Invoke($"Starting Process {startInfo.FileName} {string.Join(" ", startInfo.ArgumentList)}");
 
-        if (mode == EtwUltraProfilerConsoleMode.Silent)
+        if (mode == UltraProfilerConsoleMode.Silent)
         {
             startInfo.UseShellExecute = true;
             startInfo.CreateNoWindow = true;
             startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+
+            if (runner.OnPrepareStartProcess != null)
+            {
+                await runner.OnPrepareStartProcess(startInfo);
+            }
 
             process.Start();
         }
@@ -558,6 +487,11 @@ public class EtwUltraProfiler : IDisposable
                     ultraProfilerOptions.ProgramLogStderr?.Invoke(args.Data);
                 }
             };
+
+            if (runner.OnPrepareStartProcess != null)
+            {
+                await runner.OnPrepareStartProcess(startInfo);
+            }
 
             process.Start();
 
@@ -586,20 +520,50 @@ public class EtwUltraProfiler : IDisposable
         };
         thread.Start();
 
+        if (runner.OnProcessStarted != null)
+        {
+            await runner.OnProcessStarted(process);
+        }
+
         return state;
     }
 
     private void WaitForCleanCancel()
     {
-        if (_cleanCancel is not null)
+        if (CleanCancel is not null)
         {
-            _cleanCancel.WaitOne();
-            _cleanCancel.Dispose();
-            _cleanCancel = null;
+            CleanCancel.WaitOne();
+            CleanCancel.Dispose();
+            CleanCancel = null;
         }
     }
 
-    private class ProcessState
+    private protected class ProfilerRunner(string baseFileName)
+    {
+        public string BaseFileName { get; } = baseFileName;
+
+        public required Func<Task> OnStart;
+
+        public required Func<Task> OnEnablingProfiling;
+
+        public required Func<long> OnProfiling;
+
+        public required Func<Task> OnStop;
+
+        public Func<ProcessStartInfo, Task>? OnPrepareStartProcess;
+
+        public Func<Process, Task>? OnProcessStarted;
+
+        public required Func<Task> OnCatch;
+
+        public required Func<Task> OnFinally;
+
+        public required Func<Task<List<UltraProfilerTraceFile>>> FinishFileToConvert;
+
+        public required Func<Task> OnFinalCleanup;
+    }
+
+    private protected class ProcessState
     {
         public ProcessState(Process process)
         {
