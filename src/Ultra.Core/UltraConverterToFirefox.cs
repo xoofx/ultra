@@ -87,7 +87,8 @@ public abstract class UltraConverterToFirefox : IDisposable
         }
         else if (extension == ".nettrace")
         {
-            throw new NotImplementedException();
+            using var converter = new UltraConverterToFirefoxEventPipe(traceFiles, options);
+            return converter.Convert(processIds);
         }
         else
         {

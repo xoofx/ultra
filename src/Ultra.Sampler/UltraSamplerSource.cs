@@ -130,7 +130,7 @@ internal sealed class UltraSamplerSource : EventSource
                 evt[4].Size = sizeof(int);
                 evt[5].DataPointer = (nint)osInformationPtr;
                 evt[5].Size = osInformationSize * sizeof(char);
-                WriteEventCore(UltraSamplerConstants.NativeThreadStopEventId, 6, evt);
+                WriteEventCore(UltraSamplerConstants.NativeProcessStartEventId, 6, evt);
             }
         }
     }

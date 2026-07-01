@@ -127,7 +127,6 @@ internal class UltraEventProcessor
         process.OSDescription = processStartEvent.OSDescription.ToString();
 
         processState.SetCurrentProcess(process);
-        _session.Processes.Add(process);
     }
 
     private void ClrOnGCRestartEEStart(GCNoUserDataTraceData gcRestartEE)

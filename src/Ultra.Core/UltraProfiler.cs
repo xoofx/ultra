@@ -319,7 +319,7 @@ public abstract class UltraProfiler : IDisposable
         var traceFiles = await runner.FinishFileToConvert();
 
         string jsonFinalFile = string.Empty;
-        if (traceFiles.Count > 9)
+        if (traceFiles.Count > 0)
         {
             jsonFinalFile = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
         }

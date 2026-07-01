@@ -62,7 +62,8 @@ internal class DiagnosticPortSession
 
             if (_sampler)
             {
-                _cancelConnectSource.CancelAfter(500);
+                // Give enough time to the injected sampler (NativeAOT) to boot and create the diagnostic port socket
+                _cancelConnectSource.CancelAfter(5000);
             }
 
             var connectionAddress = await TryFindConnectionAddress(_pid, _sampler, connectCancellationToken).ConfigureAwait(false);

@@ -31,13 +31,13 @@ namespace Ultra.Core
 
         public int RuntimeIdentifierLength => GetInt32At(12);
 
-        public unsafe char* RuntimeIdentifierPointer => (char*)DataStart + 16;
+        public unsafe char* RuntimeIdentifierPointer => (char*)(DataStart + 16);
 
         public unsafe ReadOnlySpan<char> RuntimeIdentifier => new(RuntimeIdentifierPointer, RuntimeIdentifierLength);
 
         public int OSDescriptionLength => GetInt32At(16 + RuntimeIdentifierLength * sizeof(char));
 
-        public unsafe char* OSDescriptionPointer => (char*)DataStart + 20 + RuntimeIdentifierLength * sizeof(char);
+        public unsafe char* OSDescriptionPointer => (char*)(DataStart + 20 + RuntimeIdentifierLength * sizeof(char));
 
         public unsafe ReadOnlySpan<char> OSDescription => new(OSDescriptionPointer, OSDescriptionLength);
 

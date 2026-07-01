@@ -35,11 +35,19 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
     {
         if (_mapManagedMethodIDToMethodIndex.TryGetValue(methodID, out var methodIndex))
         {
+            // A method can be recompiled at a different address (e.g. tiered compilation),
+            // so record the additional code range for the same method.
+            if (!_mapMethodAddressToMethodIndex.ContainsKey(methodStartAddress))
+            {
+                _mapMethodAddressToMethodIndex.Add(methodStartAddress, methodIndex);
+                _methodAddressRanges.Add(new(methodStartAddress, methodStartAddress + methodSize, methodIndex));
+            }
             return List[methodIndex];
         }
         var method = new UTraceManagedMethod(threadID, moduleID, methodID, methodNamespace, methodName, methodSignature, methodToken, methodFlags, methodStartAddress, methodSize);
         methodIndex = List.Count;
         _mapManagedMethodIDToMethodIndex.Add(methodID, methodIndex);
+        _mapMethodAddressToMethodIndex.Add(methodStartAddress, methodIndex);
         List.Add(method);
         _methodAddressRanges.Add(new(methodStartAddress, methodStartAddress + methodSize, methodIndex));
         return method;
