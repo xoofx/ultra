@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Diagnostics;
+using Ultra.Sampler;
 
 namespace Ultra.Core;
 
@@ -26,6 +27,12 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
     private protected override ProfilerRunner CreateRunner(UltraProfilerOptions ultraProfilerOptions, List<Process> processList, string baseName, Process? singleProcess)
     {
+        if (processList.Count > 0)
+        {
+            // The sampler library can only be injected at process startup (via DYLD_INSERT_LIBRARIES)
+            throw new PlatformNotSupportedException("Attaching to a running process is not supported on macOS. Use `ultra profile -- <program> [args...]` to launch and profile a program.");
+        }
+
         UltraSamplerProfilerState? profilerState = null;
 
         var runner = new ProfilerRunner(baseName)
@@ -36,7 +43,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
             OnPrepareStartProcess = (processInfo) =>
             {
-                SetupUltraSampler(processInfo);
+                SetupUltraSampler(processInfo, ultraProfilerOptions);
                 return Task.CompletedTask;
             },
 
@@ -60,7 +67,17 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
             FinishFileToConvert = () => Task.FromResult(profilerState?.GetGeneratedTraceFiles() ?? []),
 
-            OnFinalCleanup = () => Task.CompletedTask,
+            OnFinalCleanup = () =>
+            {
+                if (!ultraProfilerOptions.KeepMergedEtl && profilerState is not null)
+                {
+                    foreach (var traceFile in profilerState.GetGeneratedTraceFiles())
+                    {
+                        File.Delete(traceFile.FileName);
+                    }
+                }
+                return Task.CompletedTask;
+            },
 
             OnEnablingProfiling = async () =>
             {
@@ -75,7 +92,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
     }
 
 
-    private static void SetupUltraSampler(ProcessStartInfo startInfo)
+    private static void SetupUltraSampler(ProcessStartInfo startInfo, UltraProfilerOptions ultraProfilerOptions)
     {
         const string key = "DYLD_INSERT_LIBRARIES";
         startInfo.Environment.TryGetValue(key, out var value);
@@ -93,6 +110,10 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
         //Console.WriteLine($"DYLD_INSERT_LIBRARIES={value}");
         startInfo.Environment[key] = value;
+
+        // The sampler cannot sleep less than 1ms between samples
+        var samplingIntervalInMs = (int)Math.Clamp(MathF.Round(ultraProfilerOptions.CpuSamplingIntervalInMs), 1, 1000);
+        startInfo.Environment[UltraSamplerConstants.SamplingIntervalEnvironmentVariable] = samplingIntervalInMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private class UltraSamplerProfilerState

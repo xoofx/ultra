@@ -42,7 +42,7 @@ internal class Program
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process to attach the profiler to.", (int pid) => { pidList.Add(pid); } },
-                { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is 8190Hz = {options.CpuSamplingIntervalInMs:0.000}ms.", (float v) => options.CpuSamplingIntervalInMs  = v },
+                { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsWindows() ? " (8190Hz)" : ", minimum is 1ms on macOS")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
                 { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
@@ -290,10 +290,15 @@ internal class Program
                         );
                     }
 
-                    if (jsonGzOutput != null)
+                    if (!string.IsNullOrEmpty(jsonGzOutput))
                     {
                         AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{jsonGzOutput}[/] - {ByteSize.FromBytes(new FileInfo(jsonGzOutput).Length)}");
                         AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[red]The profiler did not generate any trace file[/]");
+                        return 1;
                     }
 
                     return 0;

@@ -20,6 +20,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     private ulong _samplerThreadId;
     private readonly AutoResetEvent _samplerResumeThreadEvent;
     private ulong _samplingId;
+    private readonly int _samplingIntervalInMs;
 
     // Frames information
     private const int MaximumFrames = 4096;
@@ -50,6 +51,13 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     {
         // Make sure to use the instance to trigger the constructor of the EventSource so that it is registered in the runtime!
         _samplerEventSource = UltraSamplerSource.Log;
+
+        // The sampling interval is passed by the ultra host via an environment variable (1ms sleep is the lowest we can get on macOS)
+        if (!int.TryParse(Environment.GetEnvironmentVariable(UltraSamplerConstants.SamplingIntervalEnvironmentVariable), out _samplingIntervalInMs))
+        {
+            _samplingIntervalInMs = 1;
+        }
+        _samplingIntervalInMs = Math.Clamp(_samplingIntervalInMs, 1, 1000);
 
         _frames = GC.AllocateArray<ulong>(4096, true);
         _allCompressedFrames = GC.AllocateArray<ulong>(MaximumCompressedFrameTotalCount * MaximumThreadCountForCompressedFrames, true);
@@ -137,8 +145,8 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     // Sample the callstacks
                     Sample(rootTask, UltraSamplerSource.Log.NativeCallstack);
 
-                    // Sleep for 1ms (lowest we can get on macOS)
-                    Thread.Sleep(1);
+                    // Sleep between samples
+                    Thread.Sleep(_samplingIntervalInMs);
                 }
                 else
                 {

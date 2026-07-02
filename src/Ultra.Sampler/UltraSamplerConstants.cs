@@ -33,4 +33,9 @@ public static class UltraSamplerConstants
     public const int TaskNativeThreadStopEventId = 4;
 
     public const int TaskNativeProcessStartEventId = 5;
+
+    /// <summary>
+    /// Name of the environment variable to configure the sampling interval in milliseconds of the sampler.
+    /// </summary>
+    public const string SamplingIntervalEnvironmentVariable = "ULTRA_SAMPLER_SAMPLING_INTERVAL_MS";
 }

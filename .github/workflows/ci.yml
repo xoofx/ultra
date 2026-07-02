@@ -16,3 +16,32 @@ jobs:
         uses: xoofx/.github/.github/actions/dotnet-releaser-action@main
         with:
           NUGET_TOKEN: ${{ secrets.NUGET_TOKEN }}
+
+  build-macos:
+    runs-on: 'macos-15' # ARM64 (Apple Silicon)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build native sampler
+        working-directory: src/Ultra.Sampler
+        run: ./build_native.sh
+
+      - name: Build
+        working-directory: src
+        run: dotnet build ultra.sln -c Release
+
+      - name: Test
+        working-directory: src
+        run: dotnet test ultra.sln -c Release --no-build
+
+      - name: Smoke test profiling
+        working-directory: src
+        run: |
+          ./Ultra/bin/Release/net8.0/ultra profile --duration 10 -- Ultra.Example/bin/Release/net8.0/Ultra.Example
+          ls -la *.json.gz
