@@ -38,7 +38,6 @@ internal class UltraEventProcessor
         _samplerParser.EventNativeThreadStart += SamplerParserOnEventNativeThreadStart;
         _samplerParser.EventNativeThreadStop += SamplerParserOnEventNativeThreadStop;
         _samplerParser.EventNativeProcessStart += SamplerParserOnEventNativeProcessStart;
-        _samplerParser.Source.Dynamic.AddCallbackForProviderEvent("Microsoft-DotNETCore-EventPipe", "ProcessInfo", SamplerProcessInfo);
     }
 
     public UltraEventProcessor(TraceEventDispatcher samplerEventSource, TraceEventDispatcher clrEventSource) : this(samplerEventSource)
@@ -385,13 +384,6 @@ internal class UltraEventProcessor
         thread.StopTime = UTimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec);
     }
 
-    private void SamplerProcessInfo(TraceEvent obj)
-    {
-        var osInformation = obj.PayloadByName("OSInformation") as string;
-        var archInformation = obj.PayloadByName("ArchInformation") as string;
-        //Console.WriteLine(osInformation);
-    }
-
     private ProcessState GetProcessState(TraceEvent evt)
     {
         var processID = evt.ProcessID;
@@ -457,6 +449,7 @@ internal class UltraEventProcessor
     private class ThreadSamplerState
     {
         private readonly UCodeAddressIndex[] _previousFrame = new UCodeAddressIndex[63]; // 64 - 1 as in the sampler, the first index is used for the count
+        private int _previousFrameCount;
         private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
         private readonly UTraceThread _thread;
         private TimeSpan _lastSampleTime;
@@ -480,7 +473,13 @@ internal class UltraEventProcessor
         {
             _callStack.Clear();
             var newFrameAddresses = evt.FrameAddresses;
-            var callStackCount = evt.PreviousFrameCount + newFrameAddresses.Length;
+            var previousFrameCount = evt.PreviousFrameCount;
+            if (previousFrameCount > _previousFrameCount)
+            {
+                // The sampler references more previous frames than we have recorded - should not happen, skip the sample
+                return;
+            }
+            var callStackCount = previousFrameCount + newFrameAddresses.Length;
             if (callStackCount == 0) return;
             _callStack.UnsafeSetCount(callStackCount);
 
@@ -495,24 +494,28 @@ internal class UltraEventProcessor
                 callStackIt = ref Unsafe.Add(ref callStackIt, 1);
             }
 
-            var previousFrameCount = evt.PreviousFrameCount;
             if (previousFrameCount > 0)
             {
+                // PreviousFrameCount is the number of frames shared with the previous stack from the root side.
+                // _previousFrame stores the root-most frames of the previous stack in leaf-first order,
+                // so the shared frames are the last previousFrameCount entries of the recorded window.
                 var previousFrame = _previousFrame;
+                var offset = _previousFrameCount - previousFrameCount;
                 for (var i = 0; i < previousFrameCount; i++)
                 {
-                    callStackIt = previousFrame[i];
+                    callStackIt = previousFrame[offset + i];
                     callStackIt = ref Unsafe.Add(ref callStackIt, 1);
                 }
             }
 
-            // Copy the new frame to the previous frame
+            // Record the root-most frames of this stack (leaf-first order) for the next sample
             var callStack = _callStack.AsSpan();
             var maxLengthToCopy = Math.Min(_previousFrame.Length, callStack.Length);
             for (var i = 0; i < maxLengthToCopy; i++)
             {
                 _previousFrame[i] = callStack[callStack.Length - maxLengthToCopy + i];
             }
+            _previousFrameCount = maxLengthToCopy;
 
             var callStackIndex = process.CallStacks.InsertCallStack(callStack);
 

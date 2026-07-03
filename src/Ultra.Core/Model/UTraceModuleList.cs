@@ -17,6 +17,7 @@ public sealed class UTraceModuleList : UGenericList<UTraceModule>
     private UnsafeDictionary<long, int> _mapModuleIDToManagedModule = new();
     private UnsafeDictionary<ulong, int> _mapModuleAddressToLoadedModule = new();
     private UnsafeList<UAddressRange> _loadedModuleAddressRanges = new();
+    private bool _loadedModuleAddressRangesSorted = true;
 
     /// <summary>
     /// Gets or creates a module file based on the file path.
@@ -82,7 +83,8 @@ public sealed class UTraceModuleList : UGenericList<UTraceModule>
         List.Add(loadedModule);
 
         _loadedModuleAddressRanges.Add(new(baseAddress, baseAddress + codeSize, loadedModuleIndex));
-        _loadedModuleAddressRanges.AsSpan().SortByRef(new UAddressRangeComparer());
+        // Sorting (required by the binary search in TryFindNativeModuleByAddress) is deferred to the first lookup
+        _loadedModuleAddressRangesSorted = false;
 
         return loadedModule;
     }
@@ -95,6 +97,12 @@ public sealed class UTraceModuleList : UGenericList<UTraceModule>
     /// <returns>True if the module was found, otherwise false.</returns>
     public bool TryFindNativeModuleByAddress(UAddress address, [NotNullWhen(true)] out UTraceNativeModule? module)
     {
+        if (!_loadedModuleAddressRangesSorted)
+        {
+            _loadedModuleAddressRanges.AsSpan().SortByRef(new UAddressRangeComparer());
+            _loadedModuleAddressRangesSorted = true;
+        }
+
         var ranges = _loadedModuleAddressRanges.AsSpan();
         var comparer = new UAddressRangeFinder(address);
         var index = ranges.BinarySearch(comparer);

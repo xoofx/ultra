@@ -34,6 +34,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
     private UTraceModuleFileIndex _clrJitModuleIndex = UTraceModuleFileIndex.Invalid;
     private UTraceModuleFileIndex _coreClrModuleIndex = UTraceModuleFileIndex.Invalid;
     private int _profileThreadIndex;
+    private int _gcAllocationTickNameIndex = -1;
 
     // Offset to apply to CLR relative timestamps to realign them with the sampler session start time
     private double _clrTimeOffsetInMs;
@@ -52,9 +53,14 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
             {
                 clrFilePath = traceFile.FileName;
             }
+            else if (traceFiles.Count > 1)
+            {
+                // Don't ignore silently a file that we don't recognize
+                throw new ArgumentException($"Unrecognized nettrace file name `{traceFile.FileName}`. Expecting a file ending with `{SamplerFileSuffix}` or `{ClrFileSuffix}`");
+            }
         }
 
-        // If files don't follow the naming convention, assume the first file is the sampler
+        // A single file not following the naming convention is assumed to be the sampler file
         samplerFilePath ??= traceFiles[0].FileName;
 
         _samplerSource = new EventPipeEventSource(samplerFilePath);
@@ -233,12 +239,13 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
                 samples.TimeDeltas.Add(sampleTimeInMs - previousSampleTimeInMs);
                 samples.Stack.Add(firefoxCallStackIndex);
                 var cpuDeltaInNs = (long)(sample.CpuTime.InMs * 1_000_000.0);
-                samples.ThreadCPUDelta.Add(cpuDeltaInNs > 0 ? (int)cpuDeltaInNs : 0);
+                samples.ThreadCPUDelta.Add(cpuDeltaInNs > 0 ? (int)Math.Min(cpuDeltaInNs, int.MaxValue) : 0);
                 samples.Length++;
                 previousSampleTimeInMs = sampleTimeInMs;
             }
 
             // Convert markers
+            _gcAllocationTickNameIndex = -1;
             foreach (var marker in thread.Markers.Items)
             {
                 ConvertMarker(marker, threadIndex, thread, profileThread, gcHeapStatsMarkers);
@@ -327,7 +334,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
         {
             if (module is UTraceNativeModule nativeModule && !nativeModule.ModuleFile.FilePath.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase))
             {
-                return Path.GetFileName(nativeModule.ModuleFile.FilePath);
+                return nativeModule.ModuleFile.FileName;
             }
         }
 
@@ -355,7 +362,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
             var moduleFile = nativeModule.ModuleFile;
             if (!_mapModuleFileIndexToFirefox.ContainsKey(moduleFile.Index))
             {
-                var moduleName = Path.GetFileName(moduleFile.FilePath);
+                var moduleName = moduleFile.FileName;
 
                 var lib = new FirefoxProfiler.Lib
                 {
@@ -569,7 +576,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
         }
         else
         {
-            var moduleName = Path.GetFileName(moduleFile.FilePath);
+            var moduleName = moduleFile.FileName;
             funcName = $"{moduleName}!0x{address.Value:X16}";
         }
 
@@ -622,7 +629,7 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
         var resourceIndex = resourceTable.Length;
         _mapModuleFileToResourceFirefox.Add(moduleFile, resourceIndex);
 
-        var moduleName = Path.GetFileName(moduleFile.FilePath);
+        var moduleName = moduleFile.FileName;
         resourceTable.Name.Add(GetOrCreateString(moduleName, profileThread));
         resourceTable.Lib.Add(_mapModuleFileIndexToFirefox.TryGetValue(moduleFile.Index, out var firefoxLibIndex) ? firefoxLibIndex : null);
         resourceTable.Host.Add(null);
@@ -708,7 +715,11 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
                 markers.Category.Add(CategoryGc);
                 markers.Phase.Add(FirefoxProfiler.MarkerPhase.Instance);
                 markers.ThreadId.Add(_profileThreadIndex);
-                markers.Name.Add(GetOrCreateString($"{threadIndex} - GC Alloc ({thread.ThreadID})", profileThread));
+                if (_gcAllocationTickNameIndex < 0)
+                {
+                    _gcAllocationTickNameIndex = GetOrCreateString($"{threadIndex} - GC Alloc ({thread.ThreadID})", profileThread);
+                }
+                markers.Name.Add(_gcAllocationTickNameIndex);
                 markers.Data.Add(new GCAllocationTickEvent
                 {
                     AllocationAmount = allocationTick.AllocationAmount,

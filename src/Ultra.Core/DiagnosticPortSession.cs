@@ -100,6 +100,8 @@ internal class DiagnosticPortSession
                 return;
             }
 
+            // Note the Unwrap: awaiting _profilingTask must wait for the async continuation itself
+            // (the EventPipe session creation), not only for its synchronous prefix.
             _profilingTask = _connectTask.ContinueWith(async task =>
             {
                 if (task.IsFaulted)
@@ -136,7 +138,7 @@ internal class DiagnosticPortSession
                 var config = new EventPipeSessionConfiguration([ultraEventProvider], 512, !_sampler, true);
                 _eventPipeSession = await _diagnosticsClient!.StartEventPipeSessionAsync(config, token).ConfigureAwait(false);
                 _eventStreamCopyTask = _eventPipeSession.EventStream.CopyToAsync(_nettraceFileStream, token);
-            }, token);
+            }, token).Unwrap();
         }
         finally
         {
@@ -214,7 +216,7 @@ internal class DiagnosticPortSession
                 {
                     await _connectTask.ConfigureAwait(false);
 
-                    // We wait for the session to start (we will close it right after below
+                    // We wait for the session to be started (we will stop it right after below)
                     await _profilingTask.ConfigureAwait(false);
                 }
                 catch
@@ -222,36 +224,59 @@ internal class DiagnosticPortSession
                     // Ignore
                 }
 
-                Debug.Assert(_eventStreamCopyTask is not null);
-                try
+                // Request the session to stop first: the runtime then emits the rundown events (for the CLR session)
+                // and closes the event stream, which allows the copy below to complete while the profiled
+                // process is still running. The stream must be drained concurrently for the stop to complete.
+                Task? stopTask = null;
+                if (_eventPipeSession is not null)
                 {
-                    await _eventStreamCopyTask.ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Ignore
-                }
-
-                Debug.Assert(_nettraceFileStream is not null);
-                try
-                {
-                    await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Ignore
+                    try
+                    {
+                        stopTask = _eventPipeSession.StopAsync(CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
                 }
 
-                Debug.Assert(_eventPipeSession is not null);
-                try
+                if (_eventStreamCopyTask is not null)
                 {
-                    await _eventPipeSession.StopAsync(CancellationToken.None).ConfigureAwait(false);
+                    try
+                    {
+                        await _eventStreamCopyTask.ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
                 }
-                catch
+
+                if (stopTask is not null)
                 {
-                    // Ignore
+                    try
+                    {
+                        await stopTask.ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
                 }
-                finally
+
+                if (_nettraceFileStream is not null)
+                {
+                    try
+                    {
+                        await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
+                }
+
+                if (_eventPipeSession is not null)
                 {
                     try
                     {

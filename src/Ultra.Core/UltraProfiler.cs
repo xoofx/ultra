@@ -216,6 +216,7 @@ public abstract class UltraProfiler : IDisposable
                         if (singleProcess is null)
                         {
                             baseName = $"{baseName}_pid_{processState.Process.Id}";
+                            runner.BaseFileName = baseName;
                         }
 
                         singleProcess ??= processState.Process;
@@ -317,6 +318,11 @@ public abstract class UltraProfiler : IDisposable
         }
 
         var traceFiles = await runner.FinishFileToConvert();
+
+        if (StopRequested)
+        {
+            throw new InvalidOperationException("CTRL+C requested");
+        }
 
         string jsonFinalFile = string.Empty;
         if (traceFiles.Count > 0)
@@ -540,7 +546,8 @@ public abstract class UltraProfiler : IDisposable
 
     private protected class ProfilerRunner(string baseFileName)
     {
-        public string BaseFileName { get; } = baseFileName;
+        // Can be updated after the profiled process is started (to append the pid)
+        public string BaseFileName { get; set; } = baseFileName;
 
         public required Func<Task> OnStart;
 

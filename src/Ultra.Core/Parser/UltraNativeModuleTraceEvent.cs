@@ -4,6 +4,7 @@
 
 using System.Text;
 using Microsoft.Diagnostics.Tracing;
+using Ultra.Sampler;
 
 namespace Ultra.Core;
 

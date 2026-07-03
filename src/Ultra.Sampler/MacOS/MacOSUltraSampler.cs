@@ -97,6 +97,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
     {
         if (_samplerThread is null) return;
 
+        _samplerStopped = true;
         _samplerResumeThreadEvent.Set();
         _samplerThread.Join();
         _samplerThread = null;
@@ -318,17 +319,6 @@ internal unsafe class MacOSUltraSampler : UltraSampler
         return size;
     }
 
-    //public void Sample(NativeCallstackDelegate nativeCallstack)
-    //{
-    //    MacOS.MacOSLibSystem.task_for_pid(MacOS.MacOSLibSystem.mach_task_self(), Process.GetCurrentProcess().Id, out var rootTask)
-    //        .ThrowIfError("task_for_pid");
-
-    //    MacOS.MacOSLibSystem.pthread_threadid_np(0, out var currentThreadId)
-    //        .ThrowIfError("pthread_threadid_np");
-
-    //    Sample(rootTask, currentThreadId, _frames, nativeCallstack);
-    //}
-
     private unsafe void Sample(MacOS.MacOSLibSystem.mach_port_t rootTask, NativeSamplingDelegate samplingDelegate)
     {
         // We support only ARM64 for the sampler
@@ -414,6 +404,15 @@ internal unsafe class MacOSUltraSampler : UltraSampler
             samplingDelegate(_samplingId, threadInfo.thread_id, (int)threadExtendedInfo.pth_run_state, (int)threadExtendedInfo.pth_cpu_usage, sameFrameCount, frameCount * sizeof(ulong), (byte*)pFrames);
         }
 
+        // task_threads gives us a send right for each thread port and a vm_allocate-d array that we must release,
+        // otherwise we leak them into the profiled process at the sampling frequency
+        var selfTask = MacOS.MacOSLibSystem.mach_task_self();
+        for (var i = 0; i < taskCount; i++)
+        {
+            MacOS.MacOSLibSystem.mach_port_deallocate(selfTask.Value, (uint)taskList[i].Value);
+        }
+        MacOS.MacOSLibSystem.mach_vm_deallocate(selfTask.Value, (ulong)(nuint)taskList, taskCount * (ulong)sizeof(MacOS.MacOSLibSystem.mach_port_t));
+
         // Cleanup threads that are no longer active
         foreach (var previousActiveThreadId in _activeThreadIds)
         {
@@ -424,7 +423,7 @@ internal unsafe class MacOSUltraSampler : UltraSampler
                     _freeCompressedFramesIndices.Add(compressedFrameIndex);
                 }
 
-                _samplerEventSource.NativeThreadStop(_samplingId, threadInfo.thread_id);
+                _samplerEventSource.NativeThreadStop(_samplingId, previousActiveThreadId);
             }
         }
 

@@ -28,9 +28,15 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
     private protected override void DisposeImpl()
     {
-        _userSession?.Dispose();
+        DisposeSessions();
+    }
+
+    private void DisposeSessions()
+    {
+        // Dispose stops the OS-level ETW sessions (StopOnDispose is true)
+        try { _userSession?.Dispose(); } catch { /* ignore */ }
         _userSession = null;
-        _kernelSession?.Dispose();
+        try { _kernelSession?.Dispose(); } catch { /* ignore */ }
         _kernelSession = null;
     }
 
@@ -46,7 +52,10 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
         string? etlFinalFile = null;
 
-        var runner = new ProfilerRunner(baseName)
+        // The runner variable is captured by the closures below to read the up-to-date BaseFileName
+        // (Run() appends the pid of the launched process to it after this method returns)
+        ProfilerRunner runner = null!;
+        runner = new ProfilerRunner(baseName)
         {
             OnStart = () =>
             {
@@ -92,17 +101,22 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
             OnCatch = () =>
             {
+                // Dispose the sessions first (stopping the OS-level ETW sessions) so that the files below
+                // are no longer locked and no system-wide session is leaked
+                DisposeSessions();
+
                 // Delete intermediate files if we have an exception
-                File.Delete(kernelFileName);
-                File.Delete(userFileName);
+                // (ignore errors so that the original exception is not masked)
+                try { File.Delete(kernelFileName); } catch { /* ignore */ }
+                try { File.Delete(userFileName); } catch { /* ignore */ }
 
                 return Task.CompletedTask;
             },
 
             OnFinally = () =>
             {
-                _userSession = null;
-                _kernelSession = null;
+                // Dispose the sessions if they are still alive (e.g. an exception was thrown before OnStop)
+                DisposeSessions();
 
                 return Task.CompletedTask;
             },
@@ -110,8 +124,8 @@ internal sealed class UltraProfilerEtw : UltraProfiler
             FinishFileToConvert = async () =>
             {
 
-                var rundownSession = $"{baseName}.rundown.etl";
-                using (TraceEventSession clrRundownSession = new TraceEventSession($"{baseName}-rundown", rundownSession))
+                var rundownSession = $"{runner.BaseFileName}.rundown.etl";
+                using (TraceEventSession clrRundownSession = new TraceEventSession($"{runner.BaseFileName}-rundown", rundownSession))
                 {
                     clrRundownSession.StopOnDispose = true;
                     clrRundownSession.CircularBufferMB = 0;
@@ -143,7 +157,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 ultraProfilerOptions.LogProgress?.Invoke($"Merging ETL Files");
                 // Merge file (and to force Volume mapping)
-                etlFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseName}.etl";
+                etlFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? runner.BaseFileName}.etl";
                 TraceEventSession.Merge([kernelFileName, userFileName, rundownSession], etlFinalFile);
                 //TraceEventSession.Merge([kernelFileName, userFileName], $"{baseName}.etl");
 

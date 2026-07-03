@@ -9,6 +9,13 @@ namespace Ultra.Core.Model;
 /// </summary>
 public sealed record UTraceModuleFile(string FilePath)
 {
+    private string? _fileName;
+
+    /// <summary>
+    /// Gets the file name (without the directory) of the module.
+    /// </summary>
+    public string FileName => _fileName ??= Path.GetFileName(FilePath);
+
     /// <summary>
     /// Gets or sets the module file index.
     /// </summary>

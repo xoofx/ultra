@@ -306,7 +306,7 @@ internal class Program
             },
             new Command("convert", "Convert an existing trace file (one ETL file or a list of nettrace files) to a Firefox Profiler json file")
             {
-                new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <file1_sampler.nettrace> <file1_main.nettrace>]"),
+                new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <file1_sampler.nettrace> <file1_clr.nettrace>]"),
                 _,
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
@@ -382,13 +382,16 @@ internal class Program
 
                                     // Try to recover the base name from the first trace file
                                     string baseName = Path.GetFileNameWithoutExtension(traceFiles[0].FileName);
-                                    if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler)) // nettrace
+                                    if (traceFiles[0].IsNettrace)
                                     {
-                                        baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameSampler.Length);
-                                    }
-                                    else if (baseName.EndsWith(UltraProfiler.NettracePostfixNameClr)) // nettrace
-                                    {
-                                        baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameClr.Length);
+                                        if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler))
+                                        {
+                                            baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameSampler.Length);
+                                        }
+                                        else if (baseName.EndsWith(UltraProfiler.NettracePostfixNameClr))
+                                        {
+                                            baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameClr.Length);
+                                        }
                                     }
                                     
                                     fileOutput = await etwProfiler.Convert(baseName, traceFiles, pidList, options);
