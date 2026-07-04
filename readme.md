@@ -34,7 +34,7 @@ Ultra is an advanced profiler for .NET Applications available on Windows and mac
 
 ## 🧑‍💻 Usage
 
-You need to have installed a [.NET 8.0+ SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+You need to have installed a [.NET 10.0+ SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 
 ```console
 $ dotnet tool install -g Ultra # The command ultra.exe will be available from your PATH

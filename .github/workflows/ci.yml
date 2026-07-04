@@ -29,9 +29,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-           8.0.x
-           10.0.x
+          dotnet-version: 10.0.x
 
       - name: Build native sampler
         working-directory: src/Ultra.Sampler
@@ -46,5 +44,5 @@ jobs:
       - name: Smoke test profiling
         working-directory: src
         run: |
-          ./Ultra/bin/Release/net8.0/ultra profile --duration 10 -- Ultra.Example/bin/Release/net8.0/Ultra.Example
+          ./Ultra/bin/Release/net10.0/ultra profile --duration 10 -- Ultra.Example/bin/Release/net10.0/Ultra.Example
           ls -la *.json.gz
