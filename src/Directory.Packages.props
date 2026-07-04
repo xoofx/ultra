@@ -14,5 +14,6 @@
     <PackageVersion Include="Verify.DiffPlex" Version="3.3.0" />
     <PackageVersion Include="Verify.MSTest" Version="31.20.0" />
     <PackageVersion Include="XenoAtom.CommandLine" Version="2.0.3" />
+    <PackageVersion Include="XenoAtom.Collections" Version="1.2.0" />
   </ItemGroup>
 </Project>
