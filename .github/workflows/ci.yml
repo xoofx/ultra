@@ -34,12 +34,10 @@ jobs:
         run: ./build_native.sh
 
       - name: Build
-        working-directory: src
-        run: dotnet build ultra.slnx -c Release
+        run: dotnet build ./src/ultra.slnx -c Release
 
       - name: Test
-        working-directory: src
-        run: dotnet test ultra.slnx -c Release --no-build
+        run: dotnet test ./src/ultra.slnx -c Release --no-build
 
       - name: Smoke test profiling
         working-directory: src
