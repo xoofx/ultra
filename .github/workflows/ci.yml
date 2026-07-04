@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: "Build, Test, Pack and Publish"
         uses: xoofx/.github/.github/actions/dotnet-releaser-action@main
-        with:
-          NUGET_TOKEN: ${{ secrets.NUGET_TOKEN }}
 
   build-macos:
     runs-on: 'macos-15' # ARM64 (Apple Silicon)
@@ -35,11 +33,11 @@ jobs:
 
       - name: Build
         working-directory: src
-        run: dotnet build ultra.sln -c Release
+        run: dotnet build ultra.slnx -c Release
 
       - name: Test
         working-directory: src
-        run: dotnet test ultra.sln -c Release --no-build
+        run: dotnet test ultra.slnx -c Release --no-build
 
       - name: Smoke test profiling
         working-directory: src

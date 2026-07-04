@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/Documentation/">
+    <File Path="../doc/notes-macos.md" />
+    <File Path="../doc/readme.md" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="../.editorconfig" />
+    <File Path="../.gitattributes" />
+    <File Path="../.github/workflows/ci.yml" />
+    <File Path="../.gitignore" />
+    <File Path="../license.txt" />
+    <File Path="../readme.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="dotnet-releaser.toml" />
+    <File Path="global.json" />
+  </Folder>
+  <Project Path="Ultra.Core/Ultra.Core.csproj" />
+  <Project Path="Ultra.Example/Ultra.Example.csproj" />
+  <Project Path="Ultra.Sampler/Ultra.Sampler.csproj" />
+  <Project Path="Ultra.Tests/Ultra.Tests.csproj" />
+  <Project Path="Ultra/Ultra.csproj" />
+</Solution>
