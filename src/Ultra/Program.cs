@@ -65,6 +65,7 @@ internal class Program
                         }
                     }
                 },
+                { "<>", "Exec to launch with arguments passed" },
                 // Action for the commit command
                 async (ctx, arguments) =>
                 {
