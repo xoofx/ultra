@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <PublishAot>true</PublishAot>
+    <AssemblyName>libUltraSampler</AssemblyName>
+    <EventSourceSupport>true</EventSourceSupport>
+    <_SuppressNativeLibEventSourceWarning>true</_SuppressNativeLibEventSourceWarning>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ultra.Tests"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="XenoAtom.Collections" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="libUltraSampler.dylib" />
+    <None Remove="libUltraSamplerHook.dylib" />
+  </ItemGroup>
+
+</Project>

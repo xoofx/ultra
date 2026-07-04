@@ -7,19 +7,19 @@ using Microsoft.Diagnostics.Symbols;
 namespace Ultra.Core;
 
 /// <summary>
-/// Options for <see cref="EtwUltraProfiler"/>.
+/// Options for <see cref="UltraProfiler"/>.
 /// </summary>
-public class EtwUltraProfilerOptions
+public class UltraProfilerOptions
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="EtwUltraProfilerOptions"/> class with default values.
+    /// Initializes a new instance of the <see cref="UltraProfilerOptions"/> class with default values.
     /// </summary>
-    public EtwUltraProfilerOptions()
+    public UltraProfilerOptions()
     {
         CheckDeltaTimeInMs = 500;
         UpdateLogAfterInMs = 1000;
         TimeOutAfterInMs = 30 * 1000; // 30s
-        CpuSamplingIntervalInMs = 1000.0f / 8190.0f;
+        CpuSamplingIntervalInMs = OperatingSystem.IsWindows() ? 1000.0f / 8190.0f : 1.0f;
         KeepMergedEtl = false;
         KeepEtlIntermediateFiles = false;
         DelayInSeconds = 0.0; // 0 seconds
@@ -75,7 +75,7 @@ public class EtwUltraProfilerOptions
     /// <summary>
     /// Gets or sets the console mode for the profiler.
     /// </summary>
-    public EtwUltraProfilerConsoleMode ConsoleMode { get; set; }
+    public UltraProfilerConsoleMode ConsoleMode { get; set; }
 
     /// <summary>
     /// Gets or sets the action to log progress messages.

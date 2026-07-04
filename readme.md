@@ -2,13 +2,13 @@
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/xoofx/ultra/main/img/ultra.png">
 
-Ultra is an advanced profiler for .NET Applications available on Windows.
+Ultra is an advanced profiler for .NET Applications available on Windows and macOS (Apple Silicon).
 
 > 📽️ Check this [video](https://vimeo.com/1030852299) for a quick tour of ultra! 📽️
 
 ## ✨ Features
 
-- ETW based **sampling profiler** - up to 8190 samples/second
+- **Sampling profiler** - ETW based on Windows (up to 8190 samples/second), in-process sampler over EventPipe on macOS ARM64 (up to 1000 samples/second)
 - UI based on https://profiler.firefox.com/
   - Traces shareable online: Check this example: ✨ https://share.firefox.dev/3Cya7YW ✨
   - **Timeline** visualization
@@ -40,6 +40,8 @@ You need to have installed a [.NET 8.0+ SDK](https://dotnet.microsoft.com/en-us/
 $ dotnet tool install -g Ultra # The command ultra.exe will be available from your PATH
 ```
 
+### Windows
+
 > ____
 > 🚨 The profiler **requires to run from an elevated prompt with administrative rights** 🚨 
 >
@@ -60,6 +62,22 @@ Profiling a running application just requires the PID of the process to profile:
 $ ultra.exe profile 15243 # PID of the process to profile
 # Wait for a bit and press only one CTRL+C to stop the profiling
 ```
+
+### macOS (Apple Silicon)
+
+On macOS, **no elevated privileges are required**. The profiler injects a small sampler library into the launched process to collect native and managed call stacks.
+
+```console
+$ ultra profile -- my_command arg0 arg1 arg2...
+```
+
+Current limitations on macOS:
+
+- Only **ARM64** (Apple Silicon) is supported.
+- Only **launching a program** is supported - attaching to a running process with a PID is not (the sampler library can only be injected at process startup).
+- The maximum sampling frequency is 1000 samples/second (`--sampling-interval` minimum is 1ms).
+- Kernel call stacks are not collected (user-space native and managed call stacks are).
+- Symbols of system libraries living in the dyld shared cache (e.g. `libsystem_pthread.dylib`) are not resolved.
 
 ## 📖 User Guide
 
