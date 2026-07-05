@@ -79,6 +79,10 @@ Current limitations on macOS:
 - Kernel call stacks are not collected (user-space native and managed call stacks are).
 - Symbols of system libraries living in the dyld shared cache (e.g. `libsystem_pthread.dylib`) are not resolved.
 
+## ⚗️ 3rd-Party
+
+- **MCP server for Ultra** with [UltraMCP](https://github.com/KirillOsenkov/UltraMcp) to let your AI Coding Agent query profiling results by @KirillOsenkov
+
 ## 📖 User Guide
 
 For more details on how to use Ultra, please visit the [user guide](https://github.com/xoofx/Ultra/blob/main/doc/readme.md).
