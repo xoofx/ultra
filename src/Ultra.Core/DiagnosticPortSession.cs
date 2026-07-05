@@ -277,7 +277,7 @@ internal class DiagnosticPortSession
                         // treats that as a truncated file, so repair that narrow, lossless case before conversion.
                         if (_nettraceFilePath is not null)
                         {
-                            TryAppendMissingV6EndOfStreamBlock(_nettraceFilePath);
+                            TryAppendMissingEndOfStreamBlock(_nettraceFilePath);
                         }
                     }
                     catch
@@ -308,37 +308,65 @@ internal class DiagnosticPortSession
         }
     }
 
-    internal static bool TryAppendMissingV6EndOfStreamBlock(string nettraceFilePath)
+    internal static bool TryAppendMissingEndOfStreamBlock(string nettraceFilePath)
     {
         using var stream = new FileStream(nettraceFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096);
-        return TryAppendMissingV6EndOfStreamBlock(stream);
+        return TryAppendMissingEndOfStreamBlock(stream);
     }
 
-    internal static bool TryAppendMissingV6EndOfStreamBlock(Stream stream)
+    internal static bool TryAppendMissingEndOfStreamBlock(Stream stream)
+    {
+        const int nettraceMagicLength = 8;
+        const int int32Length = 4;
+
+        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek || stream.Length < nettraceMagicLength + int32Length)
+        {
+            return false;
+        }
+
+        Span<byte> nettraceMagic = stackalloc byte[nettraceMagicLength];
+        stream.Position = 0;
+        if (stream.Read(nettraceMagic) != nettraceMagic.Length || !nettraceMagic.SequenceEqual("Nettrace"u8))
+        {
+            return false;
+        }
+
+        Span<byte> int32Bytes = stackalloc byte[int32Length];
+        if (stream.Read(int32Bytes) != int32Bytes.Length)
+        {
+            return false;
+        }
+
+        var reservedOrFastSerializationMagicLength = BinaryPrimitives.ReadInt32LittleEndian(int32Bytes);
+        return reservedOrFastSerializationMagicLength == 0
+            ? TryAppendMissingV6EndOfStreamBlock(stream)
+            : TryAppendMissingFastSerializationEndOfStreamMarker(stream, reservedOrFastSerializationMagicLength);
+    }
+
+    private static bool TryAppendMissingV6EndOfStreamBlock(Stream stream)
     {
         const int nettraceV6HeaderLength = 20;
         const int blockHeaderLength = 4;
         const int endOfStreamBlockKind = 0;
 
-        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek || stream.Length < nettraceV6HeaderLength)
+        if (stream.Length < nettraceV6HeaderLength)
         {
             return false;
         }
 
-        Span<byte> header = stackalloc byte[nettraceV6HeaderLength];
-        stream.Position = 0;
-        if (stream.Read(header) != header.Length || !header[..8].SequenceEqual("Nettrace"u8))
+        Span<byte> int32Bytes = stackalloc byte[blockHeaderLength];
+        if (stream.Read(int32Bytes) != int32Bytes.Length)
         {
             return false;
         }
 
-        if (BinaryPrimitives.ReadInt32LittleEndian(header[8..12]) != 0)
-        {
-            return false;
-        }
-
-        var majorVersion = BinaryPrimitives.ReadInt32LittleEndian(header[12..16]);
+        var majorVersion = BinaryPrimitives.ReadInt32LittleEndian(int32Bytes);
         if (majorVersion != 6)
+        {
+            return false;
+        }
+
+        if (stream.Read(int32Bytes) != int32Bytes.Length)
         {
             return false;
         }
@@ -382,6 +410,164 @@ internal class DiagnosticPortSession
         stream.Position = fileLength;
         blockHeaderBytes.Clear();
         stream.Write(blockHeaderBytes);
+        return true;
+    }
+
+    private static bool TryAppendMissingFastSerializationEndOfStreamMarker(Stream stream, int fastSerializationMagicLength)
+    {
+        const byte nullReferenceTag = 1;
+        const byte beginPrivateObjectTag = 5;
+        const byte endObjectTag = 6;
+        const int int32Length = 4;
+
+        if (fastSerializationMagicLength <= 0 || fastSerializationMagicLength > "!FastSerialization.1"u8.Length)
+        {
+            return false;
+        }
+
+        if (stream.Length < 12L + fastSerializationMagicLength)
+        {
+            return false;
+        }
+
+        Span<byte> fastSerializationMagic = stackalloc byte[fastSerializationMagicLength];
+        if (stream.Read(fastSerializationMagic) != fastSerializationMagic.Length || !fastSerializationMagic.SequenceEqual("!FastSerialization.1"u8))
+        {
+            return false;
+        }
+
+        var fileLength = stream.Length;
+        var offset = 12L + fastSerializationMagicLength;
+        var sawBlock = false;
+        Span<byte> int32Bytes = stackalloc byte[int32Length];
+        var maximumBlockNameLength = "Microsoft.DotNet.Runtime.EventPipeFile"u8.Length;
+        Span<byte> typeNameBuffer = stackalloc byte[maximumBlockNameLength];
+
+        while (offset < fileLength)
+        {
+            stream.Position = offset;
+            var tag = stream.ReadByte();
+            if (tag < 0)
+            {
+                return false;
+            }
+
+            offset++;
+            if (tag == nullReferenceTag)
+            {
+                return true;
+            }
+
+            if (tag != beginPrivateObjectTag || !TryReadExpectedByte(stream, beginPrivateObjectTag, ref offset) || !TryReadExpectedByte(stream, nullReferenceTag, ref offset))
+            {
+                return false;
+            }
+
+            if (!TryReadInt32(stream, int32Bytes, ref offset, out var version) ||
+                !TryReadInt32(stream, int32Bytes, ref offset, out _) ||
+                !TryReadInt32(stream, int32Bytes, ref offset, out var typeNameLength))
+            {
+                return false;
+            }
+
+            if (typeNameLength <= 0 || typeNameLength > maximumBlockNameLength || offset + typeNameLength + 1 > fileLength)
+            {
+                return false;
+            }
+
+            var typeName = typeNameBuffer[..typeNameLength];
+            if (stream.Read(typeName) != typeName.Length)
+            {
+                return false;
+            }
+
+            offset += typeNameLength;
+            if (!TryReadExpectedByte(stream, endObjectTag, ref offset))
+            {
+                return false;
+            }
+
+            int blockSize;
+            if (typeName.SequenceEqual("Trace"u8) || typeName.SequenceEqual("Microsoft.DotNet.Runtime.EventPipeFile"u8))
+            {
+                if (version > 4)
+                {
+                    return false;
+                }
+
+                blockSize = version >= 3 ? 48 : 32;
+            }
+            else if (typeName.SequenceEqual("MetadataBlock"u8) ||
+                     typeName.SequenceEqual("StackBlock"u8) ||
+                     typeName.SequenceEqual("EventBlock"u8) ||
+                     typeName.SequenceEqual("SPBlock"u8))
+            {
+                if (version > 2 || !TryReadInt32(stream, int32Bytes, ref offset, out blockSize) || blockSize < 0)
+                {
+                    return false;
+                }
+
+                var alignmentPadding = (4 - ((int)offset & 0x3)) & 0x3;
+                if (offset + alignmentPadding > fileLength)
+                {
+                    return false;
+                }
+
+                offset += alignmentPadding;
+                stream.Position = offset;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (offset + blockSize > fileLength)
+            {
+                return false;
+            }
+
+            offset += blockSize;
+            stream.Position = offset;
+            if (!TryReadExpectedByte(stream, endObjectTag, ref offset))
+            {
+                return false;
+            }
+
+            sawBlock = true;
+        }
+
+        if (!sawBlock || offset != fileLength)
+        {
+            return false;
+        }
+
+        stream.Position = fileLength;
+        stream.WriteByte(nullReferenceTag);
+        return true;
+    }
+
+    private static bool TryReadInt32(Stream stream, Span<byte> buffer, ref long offset, out int value)
+    {
+        if (stream.Read(buffer) != buffer.Length)
+        {
+            value = 0;
+            return false;
+        }
+
+        value = BinaryPrimitives.ReadInt32LittleEndian(buffer);
+        offset += buffer.Length;
+        return true;
+    }
+
+    private static bool TryReadExpectedByte(Stream stream, byte expected, ref long offset)
+    {
+        var value = stream.ReadByte();
+        if (value != expected)
+        {
+            return false;
+        }
+
+        offset++;
         return true;
     }
 }
