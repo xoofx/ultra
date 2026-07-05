@@ -19,6 +19,11 @@ namespace Ultra.Core;
 /// </summary>
 internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 {
+    private const int MaxIncompleteStackDepthForRepair = 4;
+    private const int MaxBrokenStackFragmentDepthForRepair = 16;
+    private const int MinCommonPrefixDepthForRepair = 4;
+    private const int MinCommonPrefixDepthAdvantageForRepair = 2;
+
     private readonly Dictionary<ModuleFileIndex, int> _mapModuleFileIndexToFirefox;
     private readonly HashSet<ModuleFileIndex> _setManagedModules;
     private readonly Dictionary<CallStackIndex, int> _mapCallStackIndexToFirefox;
@@ -132,20 +137,12 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         double maxCpuTime = threads.Count > 0 ? threads[0].CPUMSec : 0;
         int threadIndexWithMaxCpuTime = threads.Count > 0 ? _profileThreadIndex : -1;
 
-        var threadVisited = new HashSet<int>();
-
         var processName = $"{process.Name} ({process.ProcessID})";
 
         // Add threads
         for (var threadIndex = 0; threadIndex < threads.Count; threadIndex++)
         {
             var thread = threads[threadIndex];
-            // Skip threads that have already been visited
-            // TODO: for some reasons we have some threads that are duplicated?
-            if (!threadVisited.Add(thread.ThreadID))
-            {
-                continue;
-            }
 
             _mapCallStackIndexToFirefox.Clear();
             _mapCodeAddressIndexToFirefox.Clear();
@@ -209,7 +206,14 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             //double switchTimeOutMsec = 0.0;
             foreach (var evt in thread.EventsInThread)
             {
-                if (evt.Opcode != (TraceEventOpcode) 46)
+                // Thread IDs can be reused during a trace. TraceThread carries the timestamped
+                // lifetime; ThreadID alone can merge unrelated lifetimes into one Firefox thread.
+                if (!ReferenceEquals(evt.Thread(), thread))
+                {
+                    continue;
+                }
+
+                if (evt is not SampledProfileTraceData)
                 {
                     if (evt.Opcode == (TraceEventOpcode) 0x24 && evt is CSwitchTraceData switchTraceData)
                     {
@@ -413,6 +417,11 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                     continue;
                 }
 
+                if (!ReferenceEquals(_traceLog.CallStacks.Thread(callStackIndex), thread))
+                {
+                    continue;
+                }
+
                 // Add sample
                 var firefoxCallStackIndex = ConvertCallStack(callStackIndex, profileThread);
 
@@ -433,6 +442,8 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                 samples.Length++;
                 startTime = evt.TimeStampRelativeMSec;
             }
+
+            RepairIsolatedIncompleteStacks(profileThread);
 
             ProfilerResult.Threads.Add(profileThread);
 
@@ -505,6 +516,362 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             ProfilerResult.Meta.InitialSelectedThreads!.Add(threadIndexWithMaxCpuTime);
         }
     }
+
+    // ETW stack walking can occasionally produce a very short user stack, or a short broken
+    // native/kernel fragment, between two samples that share a deep caller prefix. Graft useful
+    // partial stacks onto the surrounding common prefix, and discard fragments that only contain
+    // an unresolved/kernel root, so Firefox Profiler does not render a single broken sample as a
+    // full call-stack change.
+    internal static int RepairIsolatedIncompleteStacks(FirefoxProfiler.Thread profileThread)
+    {
+        var samples = profileThread.Samples;
+        var sampleStacks = samples.Stack;
+        var sampleCount = Math.Min(samples.Length, sampleStacks.Count);
+        if (sampleCount < 3)
+        {
+            return 0;
+        }
+
+        var stackTable = profileThread.StackTable;
+        var originalStackTableLength = stackTable.Length;
+        if (originalStackTableLength == 0)
+        {
+            return 0;
+        }
+
+        var originalSampleStacks = new int?[sampleCount];
+        for (var i = 0; i < sampleCount; i++)
+        {
+            originalSampleStacks[i] = sampleStacks[i];
+        }
+
+        var stackDepths = new int[originalStackTableLength];
+        Array.Fill(stackDepths, -1);
+
+        Dictionary<StackEntryKey, int>? stackEntryMap = null;
+        var repairedCount = 0;
+
+        var sampleIndex = 1;
+        while (sampleIndex < sampleCount - 1)
+        {
+            if (!IsIncompleteStackRepairCandidate(originalSampleStacks[sampleIndex], originalStackTableLength, stackDepths, profileThread))
+            {
+                sampleIndex++;
+                continue;
+            }
+
+            var runStart = sampleIndex;
+            do
+            {
+                sampleIndex++;
+            }
+            while (sampleIndex < sampleCount - 1 && IsIncompleteStackRepairCandidate(originalSampleStacks[sampleIndex], originalStackTableLength, stackDepths, profileThread));
+
+            var runEnd = sampleIndex;
+            if (runStart == 0 || runEnd >= sampleCount)
+            {
+                continue;
+            }
+
+            var leftStack = originalSampleStacks[runStart - 1];
+            var rightStack = originalSampleStacks[runEnd];
+            if (leftStack is null || rightStack is null)
+            {
+                continue;
+            }
+
+            if (IsIncompleteStackRepairCandidate(leftStack, originalStackTableLength, stackDepths, profileThread) ||
+                IsIncompleteStackRepairCandidate(rightStack, originalStackTableLength, stackDepths, profileThread))
+            {
+                continue;
+            }
+
+            var commonPrefix = FindCommonPrefixStack(leftStack.Value, rightStack.Value, profileThread);
+            if (commonPrefix.StackIndex < 0 || commonPrefix.Depth < MinCommonPrefixDepthForRepair)
+            {
+                continue;
+            }
+
+            var commonPrefixNodes = GetStackNodes(commonPrefix.StackIndex, profileThread);
+            var canRepairRun = true;
+            for (var i = runStart; i < runEnd; i++)
+            {
+                var stackIndex = originalSampleStacks[i]!.Value;
+                var stackDepth = GetStackDepth(stackIndex, stackDepths, profileThread);
+                if (stackDepth + MinCommonPrefixDepthAdvantageForRepair > commonPrefix.Depth)
+                {
+                    canRepairRun = false;
+                    break;
+                }
+
+                if (IsStackPrefix(GetStackNodes(stackIndex, profileThread), commonPrefixNodes, profileThread))
+                {
+                    canRepairRun = false;
+                    break;
+                }
+            }
+
+            if (!canRepairRun)
+            {
+                continue;
+            }
+
+            for (var i = runStart; i < runEnd; i++)
+            {
+                var stackIndex = originalSampleStacks[i]!.Value;
+                var incompleteStackNodes = GetStackNodes(stackIndex, profileThread);
+                int repairedStackIndex;
+                if (ShouldDiscardIncompleteStackFragment(incompleteStackNodes, profileThread))
+                {
+                    repairedStackIndex = commonPrefix.StackIndex;
+                }
+                else
+                {
+                    stackEntryMap ??= CreateStackEntryMap(profileThread);
+                    repairedStackIndex = GraftIncompleteStack(stackIndex, commonPrefix.StackIndex, commonPrefixNodes, profileThread, stackEntryMap);
+                }
+
+                if (repairedStackIndex != stackIndex)
+                {
+                    sampleStacks[i] = repairedStackIndex;
+                    repairedCount++;
+                }
+            }
+        }
+
+        return repairedCount;
+    }
+
+    private static bool IsIncompleteStackRepairCandidate(int? stackIndex, int originalStackTableLength, int[] stackDepths, FirefoxProfiler.Thread profileThread)
+    {
+        if (stackIndex is null || stackIndex.Value < 0 || stackIndex.Value >= originalStackTableLength)
+        {
+            return false;
+        }
+
+        var depth = GetStackDepth(stackIndex.Value, stackDepths, profileThread);
+        if (depth <= 0)
+        {
+            return false;
+        }
+
+        if (depth <= MaxIncompleteStackDepthForRepair)
+        {
+            return true;
+        }
+
+        return depth <= MaxBrokenStackFragmentDepthForRepair &&
+               ShouldDiscardIncompleteStackFragment(GetStackNodes(stackIndex.Value, profileThread), profileThread);
+    }
+
+    private static bool ShouldDiscardIncompleteStackFragment(List<int> stackNodes, FirefoxProfiler.Thread profileThread)
+    {
+        if (stackNodes.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var stackNode in stackNodes)
+        {
+            var category = GetStackNodeCategory(stackNode, profileThread);
+            if (category is CategoryManaged or CategoryGc or CategoryJit or CategoryClr)
+            {
+                return false;
+            }
+        }
+
+        var rootStackNode = stackNodes[0];
+        var rootCategory = GetStackNodeCategory(rootStackNode, profileThread);
+        return rootCategory == CategoryKernel || IsUnknownModuleAddressFrame(rootStackNode, profileThread);
+    }
+
+    private static int? GetStackNodeCategory(int stackIndex, FirefoxProfiler.Thread profileThread)
+    {
+        var stackTable = profileThread.StackTable;
+        var category = stackTable.Category[stackIndex];
+        if (category is not null)
+        {
+            return category;
+        }
+
+        return profileThread.FrameTable.Category[stackTable.Frame[stackIndex]];
+    }
+
+    private static bool IsUnknownModuleAddressFrame(int stackIndex, FirefoxProfiler.Thread profileThread)
+    {
+        var stackTable = profileThread.StackTable;
+        var frameIndex = stackTable.Frame[stackIndex];
+        var funcIndex = profileThread.FrameTable.Func[frameIndex];
+        var stringIndex = profileThread.FuncTable.Name[funcIndex];
+        var frameName = profileThread.StringArray[stringIndex];
+        return frameName.StartsWith("!0x", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetStackDepth(int stackIndex, int[] stackDepths, FirefoxProfiler.Thread profileThread)
+    {
+        if (stackDepths[stackIndex] >= 0)
+        {
+            return stackDepths[stackIndex];
+        }
+
+        var stackTable = profileThread.StackTable;
+        var depth = 0;
+        var currentStackIndex = stackIndex;
+        while (currentStackIndex >= 0)
+        {
+            if (currentStackIndex < stackDepths.Length && stackDepths[currentStackIndex] >= 0)
+            {
+                depth += stackDepths[currentStackIndex];
+                break;
+            }
+
+            depth++;
+            currentStackIndex = stackTable.Prefix[currentStackIndex] ?? -1;
+        }
+
+        stackDepths[stackIndex] = depth;
+        return depth;
+    }
+
+    private static StackPrefix FindCommonPrefixStack(int leftStackIndex, int rightStackIndex, FirefoxProfiler.Thread profileThread)
+    {
+        var leftStackNodes = GetStackNodes(leftStackIndex, profileThread);
+        var rightStackNodes = GetStackNodes(rightStackIndex, profileThread);
+        var commonDepth = 0;
+        var commonStackIndex = -1;
+        var count = Math.Min(leftStackNodes.Count, rightStackNodes.Count);
+        for (var i = 0; i < count; i++)
+        {
+            if (!SameStackFrame(leftStackNodes[i], rightStackNodes[i], profileThread))
+            {
+                break;
+            }
+
+            commonDepth++;
+            commonStackIndex = leftStackNodes[i];
+        }
+
+        return new StackPrefix(commonStackIndex, commonDepth);
+    }
+
+    private static int GraftIncompleteStack(int incompleteStackIndex, int prefixStackIndex, List<int> prefixStackNodes, FirefoxProfiler.Thread profileThread, Dictionary<StackEntryKey, int> stackEntryMap)
+    {
+        var incompleteStackNodes = GetStackNodes(incompleteStackIndex, profileThread);
+        var overlap = FindPrefixOverlap(prefixStackNodes, incompleteStackNodes, profileThread);
+        var currentPrefixStackIndex = prefixStackIndex;
+        for (var i = overlap; i < incompleteStackNodes.Count; i++)
+        {
+            currentPrefixStackIndex = GetOrCreateStackEntry(incompleteStackNodes[i], currentPrefixStackIndex, profileThread, stackEntryMap);
+        }
+
+        return currentPrefixStackIndex;
+    }
+
+    private static int FindPrefixOverlap(List<int> prefixStackNodes, List<int> incompleteStackNodes, FirefoxProfiler.Thread profileThread)
+    {
+        var maximumOverlap = Math.Min(prefixStackNodes.Count, incompleteStackNodes.Count);
+        for (var overlap = maximumOverlap; overlap > 0; overlap--)
+        {
+            var prefixStart = prefixStackNodes.Count - overlap;
+            var same = true;
+            for (var i = 0; i < overlap; i++)
+            {
+                if (!SameStackFrame(prefixStackNodes[prefixStart + i], incompleteStackNodes[i], profileThread))
+                {
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same)
+            {
+                return overlap;
+            }
+        }
+
+        return 0;
+    }
+
+    private static bool IsStackPrefix(List<int> possiblePrefixStackNodes, List<int> stackNodes, FirefoxProfiler.Thread profileThread)
+    {
+        if (possiblePrefixStackNodes.Count >= stackNodes.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < possiblePrefixStackNodes.Count; i++)
+        {
+            if (!SameStackFrame(possiblePrefixStackNodes[i], stackNodes[i], profileThread))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static int GetOrCreateStackEntry(int sourceStackIndex, int prefixStackIndex, FirefoxProfiler.Thread profileThread, Dictionary<StackEntryKey, int> stackEntryMap)
+    {
+        var stackTable = profileThread.StackTable;
+        var key = new StackEntryKey(
+            stackTable.Frame[sourceStackIndex],
+            prefixStackIndex,
+            stackTable.Category[sourceStackIndex],
+            stackTable.Subcategory[sourceStackIndex]);
+
+        if (stackEntryMap.TryGetValue(key, out var existingStackIndex))
+        {
+            return existingStackIndex;
+        }
+
+        var stackIndex = stackTable.Length;
+        stackEntryMap.Add(key, stackIndex);
+        stackTable.Frame.Add(key.Frame);
+        stackTable.Category.Add(key.Category);
+        stackTable.Subcategory.Add(key.Subcategory);
+        stackTable.Prefix.Add(key.Prefix);
+        stackTable.Length++;
+        return stackIndex;
+    }
+
+    private static List<int> GetStackNodes(int stackIndex, FirefoxProfiler.Thread profileThread)
+    {
+        var stackTable = profileThread.StackTable;
+        var stackNodes = new List<int>();
+        var currentStackIndex = stackIndex;
+        while (currentStackIndex >= 0)
+        {
+            stackNodes.Add(currentStackIndex);
+            currentStackIndex = stackTable.Prefix[currentStackIndex] ?? -1;
+        }
+
+        stackNodes.Reverse();
+        return stackNodes;
+    }
+
+    private static Dictionary<StackEntryKey, int> CreateStackEntryMap(FirefoxProfiler.Thread profileThread)
+    {
+        var stackTable = profileThread.StackTable;
+        var stackEntryMap = new Dictionary<StackEntryKey, int>(stackTable.Length);
+        for (var i = 0; i < stackTable.Length; i++)
+        {
+            stackEntryMap.TryAdd(new StackEntryKey(stackTable.Frame[i], stackTable.Prefix[i], stackTable.Category[i], stackTable.Subcategory[i]), i);
+        }
+
+        return stackEntryMap;
+    }
+
+    private static bool SameStackFrame(int leftStackIndex, int rightStackIndex, FirefoxProfiler.Thread profileThread)
+    {
+        var stackTable = profileThread.StackTable;
+        return stackTable.Frame[leftStackIndex] == stackTable.Frame[rightStackIndex] &&
+               stackTable.Category[leftStackIndex] == stackTable.Category[rightStackIndex] &&
+               stackTable.Subcategory[leftStackIndex] == stackTable.Subcategory[rightStackIndex];
+    }
+
+    private readonly record struct StackPrefix(int StackIndex, int Depth);
+
+    private readonly record struct StackEntryKey(int Frame, int? Prefix, int? Category, int? Subcategory);
 
     /// <summary>
     /// Loads the modules - and symbols for a given process.
