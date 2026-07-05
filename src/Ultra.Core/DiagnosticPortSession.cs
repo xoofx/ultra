@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
@@ -269,6 +270,15 @@ internal class DiagnosticPortSession
                     try
                     {
                         await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
+                        _nettraceFileStream = null;
+
+                        // If the target process exits before it observes StopAsync, the runtime can close the
+                        // EventPipe stream at a block boundary without the final EndOfStream block. TraceEvent
+                        // treats that as a truncated file, so repair that narrow, lossless case before conversion.
+                        if (_nettraceFilePath is not null)
+                        {
+                            TryAppendMissingV6EndOfStreamBlock(_nettraceFilePath);
+                        }
                     }
                     catch
                     {
@@ -296,5 +306,82 @@ internal class DiagnosticPortSession
 
             _cancelConnectSource.Dispose();
         }
+    }
+
+    internal static bool TryAppendMissingV6EndOfStreamBlock(string nettraceFilePath)
+    {
+        using var stream = new FileStream(nettraceFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096);
+        return TryAppendMissingV6EndOfStreamBlock(stream);
+    }
+
+    internal static bool TryAppendMissingV6EndOfStreamBlock(Stream stream)
+    {
+        const int nettraceV6HeaderLength = 20;
+        const int blockHeaderLength = 4;
+        const int endOfStreamBlockKind = 0;
+
+        if (!stream.CanRead || !stream.CanWrite || !stream.CanSeek || stream.Length < nettraceV6HeaderLength)
+        {
+            return false;
+        }
+
+        Span<byte> header = stackalloc byte[nettraceV6HeaderLength];
+        stream.Position = 0;
+        if (stream.Read(header) != header.Length || !header[..8].SequenceEqual("Nettrace"u8))
+        {
+            return false;
+        }
+
+        if (BinaryPrimitives.ReadInt32LittleEndian(header[8..12]) != 0)
+        {
+            return false;
+        }
+
+        var majorVersion = BinaryPrimitives.ReadInt32LittleEndian(header[12..16]);
+        if (majorVersion != 6)
+        {
+            return false;
+        }
+
+        var fileLength = stream.Length;
+        var offset = (long)nettraceV6HeaderLength;
+        var sawBlock = false;
+        Span<byte> blockHeaderBytes = stackalloc byte[blockHeaderLength];
+        while (offset + blockHeaderLength <= fileLength)
+        {
+            stream.Position = offset;
+            if (stream.Read(blockHeaderBytes) != blockHeaderBytes.Length)
+            {
+                return false;
+            }
+
+            sawBlock = true;
+            var blockHeader = BinaryPrimitives.ReadInt32LittleEndian(blockHeaderBytes);
+            var blockKind = (int)((uint)blockHeader >> 24);
+            var blockLength = blockHeader & 0x00FF_FFFF;
+            offset += blockHeaderLength;
+
+            if (blockKind == endOfStreamBlockKind)
+            {
+                return true;
+            }
+
+            if (offset + blockLength > fileLength)
+            {
+                return false;
+            }
+
+            offset += blockLength;
+        }
+
+        if (!sawBlock || offset != fileLength)
+        {
+            return false;
+        }
+
+        stream.Position = fileLength;
+        blockHeaderBytes.Clear();
+        stream.Write(blockHeaderBytes);
+        return true;
     }
 }
