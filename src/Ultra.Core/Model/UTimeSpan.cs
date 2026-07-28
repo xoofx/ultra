@@ -11,6 +11,11 @@ namespace Ultra.Core.Model;
 public readonly record struct UTimeSpan(TimeSpan Value) : IComparable<UTimeSpan>, IComparable
 {
     /// <summary>
+    /// Gets the largest representable time span, used as a sentinel for an open ended time range.
+    /// </summary>
+    public static UTimeSpan MaxValue => new(TimeSpan.MaxValue);
+
+    /// <summary>
     /// Gets the time span value in milliseconds.
     /// </summary>
     public double InMs => Value.TotalMilliseconds;
