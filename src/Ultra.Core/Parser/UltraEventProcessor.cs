@@ -27,6 +27,10 @@ internal class UltraEventProcessor
     private readonly TraceEventDispatcher? _clrEventSource;
     private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
 
+    // Delay between the sampler session start and the CLR session start, to subtract from a sampler
+    // relative timestamp to get the equivalent CLR relative timestamp
+    private double _clrTimeOffsetInMs;
+
     public UltraEventProcessor(TraceEventDispatcher samplerEventSource)
     {
         _samplerEventSource = samplerEventSource;
@@ -71,8 +75,8 @@ internal class UltraEventProcessor
         // MethodLoad
         _clrEventSource.Clr.MethodJittingStarted += ClrOnMethodJittingStarted;
         _clrEventSource.Clr.MethodLoadVerbose += ProcessMethodLoadVerbose;
-        _clrEventSource.Clr.MethodDCStartVerboseV2 += ProcessMethodLoadVerbose;
-        _clrRundownTraceEventParser.MethodDCStartVerbose += ProcessMethodLoadVerbose;
+        _clrEventSource.Clr.MethodDCStartVerboseV2 += ProcessMethodRundownVerbose;
+        _clrRundownTraceEventParser.MethodDCStartVerbose += ProcessMethodRundownVerbose;
 
         // GC Events
         _clrEventSource.Clr.GCHeapStats += ClrOnGCHeapStats;
@@ -85,9 +89,9 @@ internal class UltraEventProcessor
         _clrEventSource.Clr.GCRestartEEStop += ClrOnGCRestartEEStop;
 
         // MethodUnload
-        _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodLoadVerbose;
-        _clrEventSource.Clr.MethodDCStopVerboseV2 += ProcessMethodLoadVerbose;
-        _clrRundownTraceEventParser.MethodDCStopVerbose += ProcessMethodLoadVerbose;
+        _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodUnloadVerbose;
+        _clrEventSource.Clr.MethodDCStopVerboseV2 += ProcessMethodRundownVerbose;
+        _clrRundownTraceEventParser.MethodDCStopVerbose += ProcessMethodRundownVerbose;
 
         // MethodILToNativeMapTraceData
         _clrEventSource.Clr.MethodILToNativeMap += ProcessMethodILToNativeMap;
@@ -98,6 +102,12 @@ internal class UltraEventProcessor
     {
         // Run CLR if available
         _clrEventSource?.Process();
+
+        // The CLR session and the sampler session don't start at the same time. Method code ranges are
+        // recorded with CLR relative timestamps while samples are relative to the sampler session start.
+        _clrTimeOffsetInMs = _clrEventSource is not null
+            ? (_clrEventSource.SessionStartTime - _samplerEventSource.SessionStartTime).TotalMilliseconds
+            : 0.0;
 
         foreach (var process in _session.Processes)
         {
@@ -302,9 +312,23 @@ internal class UltraEventProcessor
         }
     }
 
-    private void ProcessMethodUnloadVerbose(MethodLoadUnloadVerboseTraceData obj)
+    private void ProcessMethodUnloadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
+        // The method might never have been reported as loaded (e.g. it was already loaded when the CLR
+        // provider was enabled), so register it first to keep the samples taken before the unload symbolized.
+        RegisterMethod(method, default);
+
+        // Dynamic methods are collectible: the runtime frees their code and hands the same address to
+        // another method later, so the code range must be closed to be able to resolve both of them.
+        var managedMethods = GetProcessState(method).CurrentProcess!.ManagedMethods;
+        managedMethods.UnloadManagedMethod(method.MethodID, method.MethodStartAddress, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec));
     }
+
+    /// <summary>
+    /// Processes a method rundown event (DCStart/DCStop) that enumerates the methods loaded at the time of
+    /// the rundown. The actual load time is unknown, so the code is recorded as loaded from the beginning of the trace.
+    /// </summary>
+    private void ProcessMethodRundownVerbose(MethodLoadUnloadVerboseTraceData method) => RegisterMethod(method, default);
 
     private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
@@ -318,8 +342,13 @@ internal class UltraEventProcessor
             threadState.PendingJitCompiles.Remove(method.MethodID);
         }
 
+        RegisterMethod(method, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec));
+    }
+
+    private void RegisterMethod(MethodLoadUnloadVerboseTraceData method, UTimeSpan loadTime)
+    {
         var managedMethods = GetProcessState(method).CurrentProcess!.ManagedMethods;
-        managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize);
+        managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize, loadTime);
     }
 
     private void ProcessModuleLoadUnload(ModuleLoadUnloadTraceData data, bool isLoad, bool isDCStartStop)
@@ -368,7 +397,9 @@ internal class UltraEventProcessor
     private void SamplerParserOnEventNativeCallstack(UltraNativeCallstackTraceEvent callstackTraceEvent)
     {
         var process = GetProcessState(callstackTraceEvent).CurrentProcess!;
-        GetThreadSamplingState(callstackTraceEvent, callstackTraceEvent.FrameThreadId).RecordStack(process, callstackTraceEvent);
+        // Rebase the sample time to the CLR session start, as method code ranges are recorded with CLR relative timestamps
+        var sampleTimeInClrTime = UTimeSpan.FromMilliseconds(callstackTraceEvent.TimeStampRelativeMSec - _clrTimeOffsetInMs);
+        GetThreadSamplingState(callstackTraceEvent, callstackTraceEvent.FrameThreadId).RecordStack(process, callstackTraceEvent, sampleTimeInClrTime);
     }
 
     private void SamplerParserOnEventNativeThreadStart(UltraNativeThreadStartTraceEvent obj)
@@ -469,7 +500,7 @@ internal class UltraEventProcessor
 
         public UTraceThread Thread => _thread;
 
-        public void RecordStack(UTraceProcess process, UltraNativeCallstackTraceEvent evt)
+        public void RecordStack(UTraceProcess process, UltraNativeCallstackTraceEvent evt, UTimeSpan sampleTimeInClrTime)
         {
             _callStack.Clear();
             var newFrameAddresses = evt.FrameAddresses;
@@ -486,10 +517,14 @@ internal class UltraEventProcessor
             ref var callStackIt = ref _callStack.UnsafeGetRefAt(0);
 
             var codeAddresses = process.CodeAddresses;
+            var managedMethods = process.ManagedMethods;
             foreach (var address in newFrameAddresses)
             {
                 var frame = (UAddress)address;
-                var codeAddressIndex = codeAddresses.GetOrCreateAddress(frame);
+                // A managed code address is resolved here and not at conversion time, because the address of a
+                // collected dynamic method is recycled: only the time of the sample can tell them apart.
+                managedMethods.TryFindMethodIndexByAddress(frame, sampleTimeInClrTime, out var managedMethodIndex);
+                var codeAddressIndex = codeAddresses.GetOrCreateAddress(frame, managedMethodIndex);
                 callStackIt = codeAddressIndex;
                 callStackIt = ref Unsafe.Add(ref callStackIt, 1);
             }

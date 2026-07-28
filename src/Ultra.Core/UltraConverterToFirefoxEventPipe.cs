@@ -456,10 +456,13 @@ internal sealed class UltraConverterToFirefoxEventPipe : UltraConverterToFirefox
         int firefoxFuncIndex;
         int frameAddress = -1;
 
-        if (process.ManagedMethods.TryFindMethodByAddress(address, out var managedMethod))
+        // The managed method was resolved when the sample was recorded (see UltraEventProcessor), as the
+        // address alone is not enough to identify a collectible method whose code block has been recycled.
+        var managedMethodIndex = process.CodeAddresses.GetManagedMethodIndex(codeAddressIndex);
+        if (managedMethodIndex >= 0)
         {
             category = CategoryManaged;
-            firefoxFuncIndex = ConvertManagedMethod(managedMethod, process, profileThread);
+            firefoxFuncIndex = ConvertManagedMethod(process.ManagedMethods[managedMethodIndex], process, profileThread);
         }
         else if (process.Modules.TryFindNativeModuleByAddress(address, out var nativeModule))
         {
