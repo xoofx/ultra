@@ -313,6 +313,7 @@ internal class Program
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process", (int pid) => { pidList.Add(pid); } },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
+                { "<>", "The trace file(s) to convert" },
                 async (ctx, arguments) =>
                 {
                     var maxWidth = Console.IsOutputRedirected ? 80 : Console.WindowWidth;
