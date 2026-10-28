@@ -147,7 +147,8 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --paused                      Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
       --delay=VALUE                 Starts profiling after a specific delay (seconds). Default is 0s.
       --duration=VALUE              Run the profiler for a maximum duration (seconds). Default is 120s
-      --keep-merged-etl-file        Keep the merged ETL file.
+      --keep-merged-etl-file        Keep the merged ETL file. Without it (and without --nofilter) the ETL files are
+                                      not merged: the profile is converted from the unmerged files directly.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
       --nofilter                    Windows only: convert the full merged ETL file. By default only the CPU samples,
                                       stacks and context switches of the profiled process(es) are converted, which is

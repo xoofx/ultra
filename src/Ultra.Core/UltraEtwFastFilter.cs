@@ -43,23 +43,17 @@ public static class UltraEtwFastFilter
     }
 
     /// <summary>
-    /// Writes the filtered ETLX file next to <paramref name="etlFile"/> (reused if it is newer than the ETL file).
+    /// Writes the filtered ETLX file next to the first ETL file (reused if it is newer than the ETL files).
     /// </summary>
-    /// <param name="etlFile">The (merged) ETL file.</param>
+    /// <param name="etlFiles">The merged ETL file, or the unmerged ETL files of a profile (kernel, user, rundown), read as one trace.</param>
     /// <param name="processIds">The processes whose samples, stacks and context switches are kept.</param>
     /// <param name="options">The options, for progress logging.</param>
-    /// <returns>The path of the filtered ETLX file, or <paramref name="etlFile"/> if filtering is not possible.</returns>
-    public static string Filter(string etlFile, IReadOnlyCollection<int> processIds, UltraProfilerOptions options)
+    /// <returns>The path of the filtered ETLX file.</returns>
+    public static string Filter(IReadOnlyList<string> etlFiles, IReadOnlyCollection<int> processIds, UltraProfilerOptions options)
     {
-        if (EventRecordField is null)
-        {
-            options.LogProgress?.Invoke("Fast filtering is not supported by this TraceEvent version, converting the full ETL file");
-            return etlFile;
-        }
-
-        var filteredFile = GetFilteredFileName(etlFile, processIds);
+        var filteredFile = GetFilteredFileName(etlFiles[0], processIds);
         var filteredInfo = new FileInfo(filteredFile);
-        if (filteredInfo.Exists && filteredInfo.Length > 0 && filteredInfo.LastWriteTimeUtc >= File.GetLastWriteTimeUtc(etlFile))
+        if (filteredInfo.Exists && filteredInfo.Length > 0 && etlFiles.All(x => filteredInfo.LastWriteTimeUtc >= File.GetLastWriteTimeUtc(x)))
         {
             options.LogProgress?.Invoke($"Reusing fast filtered ETLX file {Path.GetFileName(filteredFile)}");
             return filteredFile;
@@ -68,7 +62,7 @@ public static class UltraEtwFastFilter
         options.LogProgress?.Invoke($"Converting ETL file fast filtered for process {string.Join(", ", processIds)}");
         try
         {
-            FilterImpl(etlFile, filteredFile, processIds.ToHashSet(), options);
+            FilterImpl(etlFiles, filteredFile, processIds.ToHashSet(), options);
         }
         catch
         {
@@ -79,14 +73,21 @@ public static class UltraEtwFastFilter
         return filteredFile;
     }
 
-    private static void FilterImpl(string etlFile, string filteredFile, HashSet<int> processIds, UltraProfilerOptions options)
+    private static void FilterImpl(IReadOnlyList<string> etlFiles, string filteredFile, HashSet<int> processIds, UltraProfilerOptions options)
     {
         var clock = Stopwatch.StartNew();
         long lastLogInMs = 0;
         long eventCount = 0;
         long keptCount = 0;
 
-        using var source = new ETWTraceEventSource(etlFile);
+        // Without the EVENT_RECORD field the inline stacks cannot be hidden, so nothing is filtered (see remarks)
+        var canFilter = EventRecordField is not null;
+        if (!canFilter)
+        {
+            options.LogProgress?.Invoke("Fast filtering is not supported by this TraceEvent version, converting the full ETL file");
+        }
+
+        using var source = etlFiles.Count == 1 ? new ETWTraceEventSource(etlFiles[0]) : new ETWTraceEventSource(etlFiles, TraceEventSourceType.MergeAll);
         var sessionDurationInMs = Math.Max(1.0, source.SessionDuration.TotalMilliseconds);
 
         // The hook sees the typed events (TraceLog registers the kernel parser) before TraceLog does
@@ -97,6 +98,13 @@ public static class UltraEtwFastFilter
             {
                 lastLogInMs = clock.ElapsedMilliseconds;
                 options.LogStepProgress?.Invoke($"Converting ETL file fast filtered {Math.Min(100.0, evt.TimeStampRelativeMSec * 100.0 / sessionDurationInMs):0}%, kept {keptCount:N0} of {eventCount:N0} events");
+            }
+
+            if (!canFilter)
+            {
+                keptCount++;
+                dispatch(evt);
+                return;
             }
 
             var keep = evt switch

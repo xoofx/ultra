@@ -77,14 +77,14 @@ public abstract class UltraConverterToFirefox : IDisposable
         var extension = extensions.First();
         if (extension == ".etl")
         {
-            if (traceFiles.Count > 1)
-            {
-                throw new ArgumentException("Only one ETL file is supported");
-            }
-
             if (options.FastFilter)
             {
-                traceFiles = [new UltraProfilerTraceFile(UltraEtwFastFilter.Filter(traceFiles[0].FileName, processIds, options))];
+                // Several ETL files (e.g. the unmerged kernel, user and rundown files of a profile) are read as one trace
+                traceFiles = [new UltraProfilerTraceFile(UltraEtwFastFilter.Filter(traceFiles.Select(x => x.FileName).ToList(), processIds, options))];
+            }
+            else if (traceFiles.Count > 1)
+            {
+                throw new ArgumentException("Only one ETL file is supported with --nofilter");
             }
 
             using var converter = new UltraConverterToFirefoxEtw(traceFiles, options);
