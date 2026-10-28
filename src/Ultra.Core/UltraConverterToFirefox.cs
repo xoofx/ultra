@@ -82,6 +82,11 @@ public abstract class UltraConverterToFirefox : IDisposable
                 throw new ArgumentException("Only one ETL file is supported");
             }
 
+            if (options.FastFilter)
+            {
+                traceFiles = [new UltraProfilerTraceFile(UltraEtwFastFilter.Filter(traceFiles[0].FileName, processIds, options))];
+            }
+
             using var converter = new UltraConverterToFirefoxEtw(traceFiles, options);
             return converter.Convert(processIds);
         }

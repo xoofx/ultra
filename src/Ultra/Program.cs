@@ -49,6 +49,7 @@ internal class Program
                 { "duration=", $"Run the profiler for a maximum duration (seconds). Default is {options.DurationInSeconds}s", (double duration) => options.DurationInSeconds = duration },
                 { "keep-merged-etl-file", "Keep the merged ETL file.", v => options.KeepMergedEtl = v is not null },
                 { "keep-intermediate-etl-files", "Keep the intermediate ETL files before merging.", v => options.KeepEtlIntermediateFiles = v is not null },
+                { "nofilter", "Windows only: convert the full merged ETL file. By default only the CPU samples, stacks and context switches of the profiled process(es) are converted, which is much faster on a busy machine.", v => options.FastFilter = v is null },
                 { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
                     {
                         if ("raw".Equals(v, StringComparison.OrdinalIgnoreCase))
@@ -313,6 +314,7 @@ internal class Program
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process", (int pid) => { pidList.Add(pid); } },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
+                { "nofilter", "ETL only: convert the full ETL file. By default only the CPU samples, stacks and context switches of the --pid process(es) are converted, which is much faster on a busy machine; that filtered .etlx file is kept next to the ETL file and reused.", v => options.FastFilter = v is null },
                 { "<>", "The trace file(s) to convert" },
                 async (ctx, arguments) =>
                 {

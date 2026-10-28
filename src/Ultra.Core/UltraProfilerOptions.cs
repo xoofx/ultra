@@ -22,6 +22,7 @@ public class UltraProfilerOptions
         CpuSamplingIntervalInMs = OperatingSystem.IsWindows() ? 1000.0f / 8190.0f : 1.0f;
         KeepMergedEtl = false;
         KeepEtlIntermediateFiles = false;
+        FastFilter = true;
         DelayInSeconds = 0.0; // 0 seconds
         DurationInSeconds = 120.0; // 120 seconds
         MinimumCpuTimeBeforeThreadIsVisibleInMs = 10.0;
@@ -121,6 +122,12 @@ public class UltraProfilerOptions
     /// Gets or sets a value indicating whether to keep the merged ETL file.
     /// </summary>
     public bool KeepMergedEtl { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether only the CPU samples, stacks and context switches of the profiled processes
+    /// are converted from an ETL file (see <see cref="UltraEtwFastFilter"/>). Default is true.
+    /// </summary>
+    public bool FastFilter { get; set; }
 
     /// <summary>
     /// Gets or sets the CPU sampling interval in milliseconds.

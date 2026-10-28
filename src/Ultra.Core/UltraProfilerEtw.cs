@@ -183,6 +183,11 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                     File.Delete(etlFinalFile);
                     var etlxFinalFile = Path.ChangeExtension(etlFinalFile, ".etlx");
                     File.Delete(etlxFinalFile);
+
+                    if (ultraProfilerOptions.FastFilter)
+                    {
+                        File.Delete(UltraEtwFastFilter.GetFilteredFileName(etlFinalFile, processList.Select(x => x.Id)));
+                    }
                 }
 
                 return Task.CompletedTask;
