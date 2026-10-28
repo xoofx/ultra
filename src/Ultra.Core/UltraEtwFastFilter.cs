@@ -25,13 +25,18 @@ namespace Ultra.Core;
 /// So the hook hides the inline stacks: Ultra only uses the stacks of the CPU samples, which come from stack walk events.
 /// </para>
 /// </remarks>
-public static class UltraEtwFastFilter
+internal static class UltraEtwFastFilter
 {
     // TraceEvent keeps the EVENT_RECORD pointer internal; it is only needed to hide the extended data of an event.
     private static readonly FieldInfo? EventRecordField = typeof(TraceEvent).GetField("eventRecord", BindingFlags.NonPublic | BindingFlags.Instance);
 
     // EVENT_RECORD: EVENT_HEADER (80 bytes) + ETW_BUFFER_CONTEXT (4 bytes), then ExtendedDataCount (ushort)
-    private const int ExtendedDataCountOffset = 84;
+    internal const int ExtendedDataCountOffset = 84;
+
+    /// <summary>
+    /// Gets a value indicating whether the inline stacks of an event can be hidden with this TraceEvent version, which is required to filter.
+    /// </summary>
+    internal static bool IsSupported => EventRecordField is not null;
 
     /// <summary>
     /// Gets the name of the filtered ETLX file for an ETL file and a list of process ids.
@@ -81,7 +86,7 @@ public static class UltraEtwFastFilter
         long keptCount = 0;
 
         // Without the EVENT_RECORD field the inline stacks cannot be hidden, so nothing is filtered (see remarks)
-        var canFilter = EventRecordField is not null;
+        var canFilter = IsSupported;
         if (!canFilter)
         {
             options.LogProgress?.Invoke("Fast filtering is not supported by this TraceEvent version, converting the full ETL file");
