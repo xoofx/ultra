@@ -51,6 +51,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
         var userFileName = $"{baseName}.user.etl";
 
         string? etlFinalFile = null;
+        string[]? unmergedFiles = null;
 
         // The runner variable is captured by the closures below to read the up-to-date BaseFileName
         // (Run() appends the pid of the launched process to it after this method returns)
@@ -155,6 +156,15 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                     throw new InvalidOperationException("CTRL+C requested");
                 }
 
+                // The merge rewrites the whole kernel file (~10 GB on a busy machine) to add the image ids (PDB signatures)
+                // and volume mappings. Converting on the machine that recorded the trace, TraceEvent reads both from the
+                // local files, so the fast filter reads the unmerged files directly unless the merged ETL file is kept.
+                if (ultraProfilerOptions.FastFilter && !ultraProfilerOptions.KeepMergedEtl)
+                {
+                    unmergedFiles = [kernelFileName, userFileName, rundownSession];
+                    return unmergedFiles.Where(File.Exists).Select(x => new UltraProfilerTraceFile(x)).ToList();
+                }
+
                 ultraProfilerOptions.LogProgress?.Invoke($"Merging ETL Files");
                 // Merge file (and to force Volume mapping)
                 etlFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? runner.BaseFileName}.etl";
@@ -178,11 +188,28 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
             OnFinalCleanup = () =>
             {
+                if (unmergedFiles is not null)
+                {
+                    File.Delete(UltraEtwFastFilter.GetFilteredFileName(unmergedFiles[0], processList.Select(x => x.Id)));
+                    if (!ultraProfilerOptions.KeepEtlIntermediateFiles)
+                    {
+                        foreach (var file in unmergedFiles)
+                        {
+                            File.Delete(file);
+                        }
+                    }
+                }
+
                 if (!ultraProfilerOptions.KeepMergedEtl && etlFinalFile is not null)
                 {
                     File.Delete(etlFinalFile);
                     var etlxFinalFile = Path.ChangeExtension(etlFinalFile, ".etlx");
                     File.Delete(etlxFinalFile);
+
+                    if (ultraProfilerOptions.FastFilter)
+                    {
+                        File.Delete(UltraEtwFastFilter.GetFilteredFileName(etlFinalFile, processList.Select(x => x.Id)));
+                    }
                 }
 
                 return Task.CompletedTask;

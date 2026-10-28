@@ -147,8 +147,12 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --paused                      Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
       --delay=VALUE                 Starts profiling after a specific delay (seconds). Default is 0s.
       --duration=VALUE              Run the profiler for a maximum duration (seconds). Default is 120s
-      --keep-merged-etl-file        Keep the merged ETL file.
+      --keep-merged-etl-file        Keep the merged ETL file. Without it (and without --nofilter) the ETL files are
+                                      not merged: the profile is converted from the unmerged files directly.
       --keep-intermediate-etl-files Keep the intermediate ETL files before merging.
+      --nofilter                    Windows only: convert the full merged ETL file. By default only the CPU samples,
+                                      stacks and context switches of the profiled process(es) are converted, which is
+                                      much faster on a busy machine.
       --mode=VALUE                  Defines how the stdout/stderr of a program explicitly started by ultra should be
                                       integrated in its output. Default is `silent` which will not mix program's
                                       output. The other options are: `raw` is going to mix ultra and program output
@@ -172,4 +176,7 @@ Usage: ultra convert --pid xxx <etl_file_name.etl>
                                       Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
                                       Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
                                       symbols`.
+      --nofilter                    ETL only: convert the full ETL file. By default only the CPU samples, stacks and
+                                      context switches of the --pid process(es) are converted, which is much faster on
+                                      a busy machine; that filtered .etlx file is kept next to the ETL file and reused.
 ```
