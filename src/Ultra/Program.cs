@@ -41,7 +41,7 @@ internal class Program
                 _,
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.", v => options.BaseOutputFileName = v },
-                { "pid=", "The {PID} of the process to attach the profiler to.", (int pid) => { pidList.Add(pid); } },
+                { "pid=", "The {PID} of the process to attach the profiler to. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsWindows() ? " (8190Hz)" : ", minimum is 1ms on macOS")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
@@ -82,15 +82,17 @@ internal class Program
                         return 1;
                     }
 
-                    string? jsonGzOutput = null;
+                    List<string> jsonGzOutputs = [];
 
                     
                     // Add the pid passed as options
                     options.ProcessIds.AddRange(pidList);
 
-                    if (arguments.Length == 1 && int.TryParse(arguments[0], out var pid))
+                    if (arguments.Length == 1 && arguments[0].Length > 0 && arguments[0].All(c => char.IsAsciiDigit(c) || c == ','))
                     {
-                        options.ProcessIds.Add(pid);
+                        var pids = new List<int>();
+                        AddPids(pids, arguments[0]);
+                        options.ProcessIds.AddRange(pids.Except(options.ProcessIds).ToList());
                     }
                     else if (arguments.Length > 0)
                     {
@@ -182,7 +184,7 @@ internal class Program
 
                                     try
                                     {
-                                        jsonGzOutput = await etwProfiler.Run(options);
+                                        jsonGzOutputs = await etwProfiler.Run(options);
                                     }
                                     finally
                                     {
@@ -207,7 +209,7 @@ internal class Program
                         
                         try
                         {
-                            jsonGzOutput = await etwProfiler.Run(options);
+                            jsonGzOutputs = await etwProfiler.Run(options);
                         }
                         finally
                         {
@@ -282,7 +284,7 @@ internal class Program
                                 
                                 try
                                 {
-                                    jsonGzOutput = await etwProfiler.Run(options);
+                                    jsonGzOutputs = await etwProfiler.Run(options);
                                 }
                                 finally
                                 {
@@ -292,10 +294,9 @@ internal class Program
                         );
                     }
 
-                    if (!string.IsNullOrEmpty(jsonGzOutput))
+                    if (jsonGzOutputs.Count > 0)
                     {
-                        AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{jsonGzOutput}[/] - {ByteSize.FromBytes(new FileInfo(jsonGzOutput).Length)}");
-                        AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
+                        PrintGeneratedFiles(jsonGzOutputs);
                     }
                     else
                     {
@@ -312,7 +313,7 @@ internal class Program
                 _,
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
-                { "pid=", "The {PID} of the process", (int pid) => { pidList.Add(pid); } },
+                { "pid=", "The {PID} of the process. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "nofilter", "ETL only: convert the full ETL file. By default only the CPU samples, stacks and context switches of the --pid process(es) are converted, which is much faster on a busy machine; that filtered .etlx file is kept next to the ETL file and reused.", v => options.FastFilter = v is null },
                 { "<>", "The trace file(s) to convert" },
@@ -334,7 +335,7 @@ internal class Program
 
                     
 
-                    string? fileOutput = null;
+                    List<string> fileOutputs = [];
 
                     await AnsiConsole.Status()
                         .Spinner(Spinner.Known.Default)
@@ -386,6 +387,16 @@ internal class Program
 
                                     // Try to recover the base name from the first trace file
                                     string baseName = Path.GetFileNameWithoutExtension(traceFiles[0].FileName);
+                                    // The unmerged ETL files of a profile (x.kernel.etl, x.user.etl, x.rundown.etl)
+                                    foreach (var postfix in (ReadOnlySpan<string>)[".kernel", ".user", ".rundown"])
+                                    {
+                                        if (baseName.EndsWith(postfix, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            baseName = baseName.Substring(0, baseName.Length - postfix.Length);
+                                            break;
+                                        }
+                                    }
+
                                     if (traceFiles[0].IsNettrace)
                                     {
                                         if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler))
@@ -398,7 +409,7 @@ internal class Program
                                         }
                                     }
                                     
-                                    fileOutput = await etwProfiler.Convert(baseName, traceFiles, pidList, options);
+                                    fileOutputs = await etwProfiler.Convert(baseName, traceFiles, pidList, options);
                                 }
                                 finally
                                 {
@@ -413,11 +424,7 @@ internal class Program
                         );
 
 
-                    if (fileOutput != null)
-                    {
-                        AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{fileOutput}[/] - {ByteSize.FromBytes(new FileInfo(fileOutput).Length)}");
-                        AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
-                    }
+                    PrintGeneratedFiles(fileOutputs);
 
                     return 0;
                 }
@@ -444,6 +451,38 @@ internal class Program
         }
     }
     
+    /// <summary>
+    /// Adds the pids of a --pid option value: one pid or several separated by commas.
+    /// </summary>
+    private static void AddPids(List<int> pidList, string? value)
+    {
+        foreach (var item in (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(item, out var pid))
+            {
+                throw new ArgumentException($"Invalid pid `{item}` in --pid {value}");
+            }
+
+            if (!pidList.Contains(pid))
+            {
+                pidList.Add(pid);
+            }
+        }
+    }
+
+    private static void PrintGeneratedFiles(List<string> files)
+    {
+        foreach (var file in files)
+        {
+            AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{Markup.Escape(file)}[/] - {ByteSize.FromBytes(new FileInfo(file).Length)}");
+        }
+
+        if (files.Count > 0)
+        {
+            AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
+        }
+    }
+
     private class StatusTable
     {
         private string? _statusText;

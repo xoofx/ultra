@@ -127,10 +127,10 @@ public abstract class UltraProfiler : IDisposable
     /// Runs the profiler with the specified options.
     /// </summary>
     /// <param name="ultraProfilerOptions">The options for the profiler.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the paths to the generated JSON files (one per process when profiling several processes).</returns>
     /// <exception cref="ArgumentException">Thrown when the options are invalid.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a cancel request is received.</exception>
-    public async Task<string> Run(UltraProfilerOptions ultraProfilerOptions)
+    public async Task<List<string>> Run(UltraProfilerOptions ultraProfilerOptions)
     {
         if (ultraProfilerOptions.Paused && ultraProfilerOptions.ShouldStartProfiling is null)
         {
@@ -324,15 +324,17 @@ public abstract class UltraProfiler : IDisposable
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        string jsonFinalFile = string.Empty;
+        var jsonFinalFiles = new List<string>();
         if (traceFiles.Count > 0)
         {
-            jsonFinalFile = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions);
+            // With several processes, each gets its own file named like a single process profile
+            jsonFinalFiles = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions,
+                (pid, name) => ultraProfilerOptions.BaseOutputFileName is { } output ? $"{output}_pid_{pid}" : $"ultra_{(name.Length > 0 ? $"{name}_" : "")}{currentTime:yyyy-MM-dd_HH_mm_ss}_pid_{pid}");
         }
 
         await runner.OnFinalCleanup();
 
-        return jsonFinalFile;
+        return jsonFinalFiles;
     }
 
 
@@ -343,21 +345,38 @@ public abstract class UltraProfiler : IDisposable
     /// </summary>
     /// <param name="baseFileNameOutput">The base name of the output file.</param>
     /// <param name="traceFiles">The list of trace files to include in the conversion.</param>
-    /// <param name="pIds">The list of process IDs to include in the conversion.</param>
+    /// <param name="pIds">The list of process IDs to include in the conversion. With more than one, each process gets its own JSON file.</param>
     /// <param name="ultraProfilerOptions">The options for the profiler.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains the path to the generated JSON file.</returns>
+    /// <param name="getProcessFileName">The base name of the output file of a process (pid, process name), when there is more than one process. Default is <c>{base}_pid_{pid}</c>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the paths to the generated JSON files.</returns>
     /// <exception cref="InvalidOperationException">Thrown when a stop request is received.</exception>
-    public async Task<string> Convert(string baseFileNameOutput, List<UltraProfilerTraceFile> traceFiles, List<int> pIds, UltraProfilerOptions ultraProfilerOptions)
+    public async Task<List<string>> Convert(string baseFileNameOutput, List<UltraProfilerTraceFile> traceFiles, List<int> pIds, UltraProfilerOptions ultraProfilerOptions, Func<int, string, string>? getProcessFileName = null)
     {
-        var profile = UltraConverterToFirefox.Convert(traceFiles, ultraProfilerOptions, pIds);
+        var baseName = ultraProfilerOptions.BaseOutputFileName ?? baseFileNameOutput;
+        if (pIds.Count <= 1)
+        {
+            var profile = UltraConverterToFirefox.Convert(traceFiles, ultraProfilerOptions, pIds);
+            return [await WriteProfile($"{baseName}.json.gz", profile, ultraProfilerOptions)];
+        }
 
+        getProcessFileName ??= (pid, _) => $"{baseName}_pid_{pid}";
+        var jsonFiles = new List<string>();
+        foreach (var (pid, profile) in UltraConverterToFirefox.ConvertEachProcess(traceFiles, ultraProfilerOptions, pIds))
+        {
+            jsonFiles.Add(await WriteProfile($"{getProcessFileName(pid, profile.Meta.Product)}.json.gz", profile, ultraProfilerOptions));
+        }
+
+        return jsonFiles;
+    }
+
+    private async Task<string> WriteProfile(string jsonFinalFile, FirefoxProfiler.Profile profile, UltraProfilerOptions ultraProfilerOptions)
+    {
         if (StopRequested)
         {
             throw new InvalidOperationException("CTRL+C requested");
         }
 
-        var jsonFinalFile = $"{ultraProfilerOptions.BaseOutputFileName ?? baseFileNameOutput}.json.gz";
-        ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON");
+        ultraProfilerOptions.LogProgress?.Invoke($"Converting to Firefox Profiler JSON {Path.GetFileName(jsonFinalFile)}");
         await using var stream = File.Create(jsonFinalFile);
         await using var gzipStream = new GZipStream(stream, CompressionLevel.Optimal);
         await JsonSerializer.SerializeAsync(gzipStream, profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
