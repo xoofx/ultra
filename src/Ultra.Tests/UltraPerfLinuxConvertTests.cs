@@ -58,15 +58,20 @@ public class UltraPerfLinuxConvertTests
     }
 
     /// <summary>
-    /// Reads a real (stripped) glibc when a WSL Ubuntu distribution is installed on the machine; inconclusive otherwise.
+    /// Reads a real (stripped) glibc: the one of the machine on Linux x64, or of a WSL Ubuntu distribution on Windows; inconclusive otherwise.
     /// </summary>
     [TestMethod]
     public void ElfSymbolsOfARealLibcAreRead()
     {
-        const string libc = @"\\wsl.localhost\Ubuntu-24.04\usr\lib\x86_64-linux-gnu\libc.so.6";
-        if (!OperatingSystem.IsWindows() || !File.Exists(libc))
+        string[] candidates = OperatingSystem.IsLinux()
+            ? ["/usr/lib/x86_64-linux-gnu/libc.so.6"]
+            : OperatingSystem.IsWindows()
+                ? [@"\\wsl.localhost\Ubuntu-24.04\usr\lib\x86_64-linux-gnu\libc.so.6", @"\\wsl.localhost\Ubuntu\usr\lib\x86_64-linux-gnu\libc.so.6"]
+                : [];
+        var libc = candidates.FirstOrDefault(File.Exists);
+        if (libc is null)
         {
-            Assert.Inconclusive("No WSL Ubuntu-24.04 libc available");
+            Assert.Inconclusive("No x86_64 Ubuntu libc available");
         }
 
         Assert.IsTrue(ElfSymbolReader.TryRead(libc, out var reader));

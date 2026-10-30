@@ -2,14 +2,15 @@
   <!-- A Linux launcher in the normal (RID-less) build output: `ultra` without extension, the linux-x64 apphost made for ultra.dll,
        beside the Windows ultra.exe. The same build folder then runs on Windows (ultra.exe) and on Linux (./ultra) without a Linux
        publish; it uses the installed dotnet as `dotnet ultra.dll` does. Skipped for a build with a RuntimeIdentifier (a linux-x64
-       build makes that file itself) and on a machine without the linux-x64 apphost package. -->
+       build makes that file itself), on a non Windows machine (its own build already has an `ultra` launcher for that OS, not to be
+       replaced), and on a machine without the linux-x64 apphost package. -->
   <PropertyGroup>
     <!-- NuGetPackageRoot has no trailing slash when it comes from NUGET_PACKAGES -->
     <LinuxAppHostSource>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))microsoft.netcore.app.host.linux-x64\$(BundledNETCoreAppPackageVersion)\runtimes\linux-x64\native\apphost</LinuxAppHostSource>
   </PropertyGroup>
 
   <!-- the apphost template; the SDK downloads it itself when RuntimeIdentifiers has linux-x64 (twice is warning NU1505) -->
-  <Target Name="DownloadLinuxAppHost" AfterTargets="ProcessFrameworkReferences" Condition="'$(RuntimeIdentifier)' == ''">
+  <Target Name="DownloadLinuxAppHost" AfterTargets="ProcessFrameworkReferences" Condition="'$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
       <_LinuxAppHostDownload Include="@(PackageDownload)" Condition="'%(Identity)' == 'Microsoft.NETCore.App.Host.linux-x64'" />
       <PackageDownload Include="Microsoft.NETCore.App.Host.linux-x64" Version="[$(BundledNETCoreAppPackageVersion)]" Condition="'@(_LinuxAppHostDownload)' == ''" />
@@ -18,7 +19,7 @@
 
   <Target Name="CreateLinuxAppHost"
           AfterTargets="CopyFilesToOutputDirectory"
-          Condition="'$(RuntimeIdentifier)' == '' And Exists('$(LinuxAppHostSource)')"
+          Condition="'$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')) And Exists('$(LinuxAppHostSource)')"
           Inputs="@(IntermediateAssembly);$(LinuxAppHostSource)"
           Outputs="$(OutDir)$(AssemblyName)">
     <CreateAppHost AppHostSourcePath="$(LinuxAppHostSource)"
