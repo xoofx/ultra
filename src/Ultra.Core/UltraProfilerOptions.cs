@@ -19,7 +19,8 @@ public class UltraProfilerOptions
         CheckDeltaTimeInMs = 500;
         UpdateLogAfterInMs = 1000;
         TimeOutAfterInMs = 30 * 1000; // 30s
-        CpuSamplingIntervalInMs = OperatingSystem.IsWindows() ? 1000.0f / 8190.0f : 1.0f;
+        // The macOS sampler cannot sleep less than 1ms between samples
+        CpuSamplingIntervalInMs = OperatingSystem.IsMacOS() ? 1.0f : 1000.0f / 8190.0f;
         KeepMergedEtl = false;
         KeepEtlIntermediateFiles = false;
         FastFilter = true;
@@ -133,6 +134,17 @@ public class UltraProfilerOptions
     /// Gets or sets the CPU sampling interval in milliseconds.
     /// </summary>
     public float CpuSamplingIntervalInMs { get; set; }
+
+    /// <summary>
+    /// Gets the hardware counters to sample in addition to the CPU time (Linux only), e.g. <c>cycles</c>,
+    /// <c>cache-misses:10000</c>, <c>LLC-load-misses</c>, <c>r0843</c>. Each gives a track per thread.
+    /// </summary>
+    public List<string> HardwareCounters { get; } = new();
+
+    /// <summary>
+    /// Gets or sets the samples per second per CPU the kernel aims at for a hardware counter given without a period (Linux only). Default 4000.
+    /// </summary>
+    public int HardwareCounterFrequency { get; set; } = (int)Linux.PerfEventSpec.DefaultFrequency;
 
     /// <summary>
     /// Gets or sets the symbol path text.

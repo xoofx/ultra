@@ -158,6 +158,34 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
         return true;
     }
 
+    /// <summary>
+    /// The start of the code range of method <paramref name="methodIndex"/> that holds <paramref name="address"/> (a method has one per
+    /// compilation: tier 0, tier 1, OSR): to express a frame as an offset in its function's code.
+    /// </summary>
+    public bool TryFindMethodCodeStart(UAddress address, int methodIndex, out UAddress codeStart)
+    {
+        var ranges = _methodAddressRanges.AsSpan();
+        var index = ranges.BinarySearch(new UMethodAddressRangeFinder(address));
+        if (index >= 0)
+        {
+            var first = index;
+            while (first > 0 && ranges[first - 1].Contains(address)) first--;
+            var last = index;
+            while (last + 1 < ranges.Length && ranges[last + 1].Contains(address)) last++;
+            // the most recent range of that method at the address (the ranges of one address are in time order)
+            for (var i = last; i >= first; i--)
+            {
+                if (ranges[i].Index == methodIndex)
+                {
+                    codeStart = ranges[i].BeginAddress;
+                    return true;
+                }
+            }
+        }
+        codeStart = default;
+        return false;
+    }
+
     private void AddCodeRange(UAddress startAddress, USize size, int methodIndex, UTimeSpan loadTime)
     {
         var endAddress = startAddress + size;

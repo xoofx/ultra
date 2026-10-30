@@ -40,4 +40,23 @@ public sealed record UTraceThread(ulong ThreadID)
     /// Gets or sets the CPU time for the thread.
     /// </summary>
     public UTimeSpan CpuTime { get; set; }
+
+    /// <summary>
+    /// Gets the samples of the hardware counters recorded on this thread (Linux, one list per counter).
+    /// </summary>
+    public List<UTraceCounterSampleList> CounterSamples { get; } = new();
+
+    /// <summary>
+    /// Gets or creates the sample list of a counter.
+    /// </summary>
+    public UTraceCounterSampleList GetOrCreateCounterSamples(string name)
+    {
+        foreach (var counter in CounterSamples)
+        {
+            if (counter.Name == name) return counter;
+        }
+        var list = new UTraceCounterSampleList(name);
+        CounterSamples.Add(list);
+        return list;
+    }
 }

@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Description>Ultra is an advanced profiler for .NET Applications available on Windows.</Description>
+    <Description>Ultra is an advanced profiler for .NET Applications available on Windows, Linux and macOS.</Description>
     <Copyright>Alexandre Mutel</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Authors>Alexandre Mutel</Authors>
@@ -46,4 +46,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ultra.Core\Ultra.Core.csproj" />
   </ItemGroup>
+
+  <!-- the Linux launcher `ultra` beside ultra.exe in the normal build: the build folder copied to a Linux box runs as it is -->
+  <Import Project="LinuxAppHost.targets" />
 </Project>

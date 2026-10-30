@@ -2,13 +2,13 @@
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/xoofx/ultra/main/img/ultra.png">
 
-Ultra is an advanced profiler for .NET Applications available on Windows and macOS (Apple Silicon).
+Ultra is an advanced profiler for .NET Applications available on Windows, Linux and macOS (Apple Silicon).
 
 > 📽️ Check this [video](https://vimeo.com/1030852299) for a quick tour of ultra! 📽️
 
 ## ✨ Features
 
-- **Sampling profiler** - ETW based on Windows (up to 8190 samples/second), in-process sampler over EventPipe on macOS ARM64 (up to 1000 samples/second)
+- **Sampling profiler** - ETW based on Windows (up to 8190 samples/second), kernel perf events on Linux (up to 8190 samples/second, launch or attach), in-process sampler over EventPipe on macOS ARM64 (up to 1000 samples/second)
 - UI based on https://profiler.firefox.com/
   - Traces shareable online: Check this example: ✨ https://share.firefox.dev/3Cya7YW ✨
   - **Timeline** visualization
