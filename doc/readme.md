@@ -38,6 +38,12 @@ When attaching an existing process, you can pass directly a PID to ultra.exe:
 $ ultra.exe profile 12594 # PID of the process to profile
 ```
 
+Several processes can be profiled in one session, each into its own `json.gz` file:
+
+```console
+$ ultra.exe profile --pid 12594,13320
+```
+
 > ⚠️ You will need to press only once `CTRL+C` to stop the profiling - or if the application is closed.
 
 
@@ -138,7 +144,8 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
 
   -h, -?, --help                    Show this message and exit
   -o, --output=FILE                 The base output FILE name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.
-      --pid=PID                     The PID of the process to attach the profiler to.
+      --pid=PID                     The PID of the process to attach the profiler to. Several pids can be separated
+                                      by commas (or the option repeated): each process gets its own json file.
       --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default is 8190Hz = 0.122ms.
       --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
                                       Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
@@ -171,7 +178,8 @@ Usage: ultra convert --pid xxx <etl_file_name.etl>
 
   -h, -?, --help                    Show this message and exit
   -o, --output=FILE                 The base output FILE name. Default is the input file name without the extension.
-      --pid=PID                     The PID of the process
+      --pid=PID                     The PID of the process. Several pids can be separated by commas (or the option
+                                      repeated): each process gets its own json file.
       --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
                                       Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
                                       Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/

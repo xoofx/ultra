@@ -67,6 +67,68 @@ public abstract class UltraConverterToFirefox : IDisposable
     /// <returns>The converted Firefox profile.</returns>
     public static FirefoxProfiler.Profile Convert(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)
     {
+        traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
+        using var converter = CreateConverter(traceFiles, options);
+        return converter.Convert(processIds);
+    }
+
+    /// <summary>
+    /// Converts a list of trace files (one or more ETL files, or a list of nettrace files) to one Firefox profile per process.
+    /// </summary>
+    /// <param name="traceFiles">The list of trace files to convert.</param>
+    /// <param name="options">The options used for converting.</param>
+    /// <param name="processIds">The list of process ids to extract from the trace files.</param>
+    /// <returns>The converted Firefox profile of each process, converted one at a time while enumerating.</returns>
+    public static IEnumerable<(int ProcessId, FirefoxProfiler.Profile Profile)> ConvertEachProcess(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)
+    {
+        // The ETL files are filtered once for all the processes
+        traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
+        foreach (var processId in processIds)
+        {
+            using var converter = CreateConverter(traceFiles, options);
+            yield return (processId, converter.Convert([processId]));
+        }
+    }
+
+    private static List<UltraProfilerTraceFile> PrepareTraceFiles(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)
+    {
+        var extension = GetExtension(traceFiles);
+        if (extension == ".etl")
+        {
+            if (options.FastFilter)
+            {
+                // Several ETL files (e.g. the unmerged kernel, user and rundown files of a profile) are read as one trace
+                return [new UltraProfilerTraceFile(UltraEtwFastFilter.Filter(traceFiles.Select(x => x.FileName).ToList(), processIds, options))];
+            }
+
+            if (traceFiles.Count > 1)
+            {
+                throw new ArgumentException("Only one ETL file is supported with --nofilter");
+            }
+        }
+
+        return traceFiles;
+    }
+
+    private static UltraConverterToFirefox CreateConverter(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options)
+    {
+        var extension = GetExtension(traceFiles);
+        if (extension == ".etl" || extension == ".etlx")
+        {
+            return new UltraConverterToFirefoxEtw(traceFiles, options);
+        }
+        else if (extension == ".nettrace")
+        {
+            return new UltraConverterToFirefoxEventPipe(traceFiles, options);
+        }
+        else
+        {
+            throw new ArgumentException($"Unsupported trace file extension [{extension}]");
+        }
+    }
+
+    private static string GetExtension(List<UltraProfilerTraceFile> traceFiles)
+    {
         var extensions = traceFiles.Select(x => Path.GetExtension(x.FileName)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if (extensions.Count != 1)
@@ -74,31 +136,7 @@ public abstract class UltraConverterToFirefox : IDisposable
             throw new ArgumentException($"All trace files must have the same extension. Instead got [{string.Join(", ", extensions)}]");
         }
 
-        var extension = extensions.First();
-        if (extension == ".etl")
-        {
-            if (options.FastFilter)
-            {
-                // Several ETL files (e.g. the unmerged kernel, user and rundown files of a profile) are read as one trace
-                traceFiles = [new UltraProfilerTraceFile(UltraEtwFastFilter.Filter(traceFiles.Select(x => x.FileName).ToList(), processIds, options))];
-            }
-            else if (traceFiles.Count > 1)
-            {
-                throw new ArgumentException("Only one ETL file is supported with --nofilter");
-            }
-
-            using var converter = new UltraConverterToFirefoxEtw(traceFiles, options);
-            return converter.Convert(processIds);
-        }
-        else if (extension == ".nettrace")
-        {
-            using var converter = new UltraConverterToFirefoxEventPipe(traceFiles, options);
-            return converter.Convert(processIds);
-        }
-        else
-        {
-            throw new ArgumentException($"Unsupported trace file extension [{extension}]");
-        }
+        return extensions.First().ToLowerInvariant();
     }
 
     private FirefoxProfiler.Profile Convert(List<int> processIds)
