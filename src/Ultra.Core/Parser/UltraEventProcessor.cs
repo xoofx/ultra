@@ -16,22 +16,27 @@ namespace Ultra.Core;
 /// </summary>
 internal class UltraEventProcessor
 {
-    private readonly TraceEventDispatcher _samplerEventSource;
-    private readonly UltraSamplerParser _samplerParser;
+    private readonly TraceEventDispatcher? _samplerEventSource;
+    private readonly UltraSamplerParser? _samplerParser;
     private ProcessState? _currentProcessState;
 
-    private readonly UTraceSession _session = new();
+    private readonly UTraceSession _session;
 
     private readonly UnsafeDictionary<int, ProcessState> _processes = new(1);
 
-    private readonly TraceEventDispatcher? _clrEventSource;
-    private readonly ClrRundownTraceEventParser? _clrRundownTraceEventParser;
+    private TraceEventDispatcher? _clrEventSource;
+    private ClrRundownTraceEventParser? _clrRundownTraceEventParser;
 
     // Delay between the sampler session start and the CLR session start, to subtract from a sampler
     // relative timestamp to get the equivalent CLR relative timestamp
     private double _clrTimeOffsetInMs;
 
-    public UltraEventProcessor(TraceEventDispatcher samplerEventSource)
+    private UltraEventProcessor(UTraceSession session)
+    {
+        _session = session;
+    }
+
+    public UltraEventProcessor(TraceEventDispatcher samplerEventSource) : this(new UTraceSession())
     {
         _samplerEventSource = samplerEventSource;
         _samplerParser = new UltraSamplerParser(samplerEventSource);
@@ -45,6 +50,20 @@ internal class UltraEventProcessor
     }
 
     public UltraEventProcessor(TraceEventDispatcher samplerEventSource, TraceEventDispatcher clrEventSource) : this(samplerEventSource)
+    {
+        RegisterClrEvents(clrEventSource);
+    }
+
+    /// <summary>
+    /// Creates a processor that only loads the CLR events (managed modules and methods, GC and JIT markers) of a
+    /// nettrace file into an existing session; the samples come from another source (Linux perf events).
+    /// </summary>
+    public UltraEventProcessor(UTraceSession session, TraceEventDispatcher clrEventSource) : this(session)
+    {
+        RegisterClrEvents(clrEventSource);
+    }
+
+    private void RegisterClrEvents(TraceEventDispatcher clrEventSource)
     {
         _clrEventSource = clrEventSource;
         _clrRundownTraceEventParser = new ClrRundownTraceEventParser(clrEventSource);
@@ -103,16 +122,22 @@ internal class UltraEventProcessor
         // Run CLR if available
         _clrEventSource?.Process();
 
+        foreach (var process in _session.Processes)
+        {
+            process.ManagedMethods.SortMethodAddressRanges();
+        }
+
+        // CLR only (Linux): the samples are loaded by the caller
+        if (_samplerEventSource is null)
+        {
+            return _session;
+        }
+
         // The CLR session and the sampler session don't start at the same time. Method code ranges are
         // recorded with CLR relative timestamps while samples are relative to the sampler session start.
         _clrTimeOffsetInMs = _clrEventSource is not null
             ? (_clrEventSource.SessionStartTime - _samplerEventSource.SessionStartTime).TotalMilliseconds
             : 0.0;
-
-        foreach (var process in _session.Processes)
-        {
-            process.ManagedMethods.SortMethodAddressRanges();
-        }
 
         // Run sampler before CLR
         _samplerEventSource.Process();

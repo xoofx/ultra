@@ -5,6 +5,8 @@ using System.Text;
 using ByteSizeLib;
 using Spectre.Console;
 using Ultra.Core;
+using Ultra.Core.Linux;
+using Ultra.Core.Report;
 using XenoAtom.CommandLine;
 
 namespace Ultra;
@@ -22,6 +24,9 @@ internal class Program
         List<int> pidList = new();
 
         bool verbose = false;
+        int reportTop = 12, reportWorkers = 0;
+        bool reportOffsets = false;
+        string? reportThread = null;
         var options = new UltraProfilerOptions();
 
         const string _ = "";
@@ -42,13 +47,15 @@ internal class Program
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process to attach the profiler to. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
-                { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsWindows() ? " (8190Hz)" : ", minimum is 1ms on macOS")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
+                { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsMacOS() ? ", minimum is 1ms on macOS" : " (8190Hz)")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
+                { "pmc=", $"Linux only: hardware counters to sample besides the CPU time, comma separated {{NAME}}[:PERIOD] (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per thread, weighted by the counts. Names, {PerfEventSpec.HelpText}", v => options.HardwareCounters.AddRange((v ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) },
+                { "pmc-frequency=", $"Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given without a period. Default is {options.HardwareCounterFrequency}.", (int v) => options.HardwareCounterFrequency = v },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
                 { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
                 { "duration=", $"Run the profiler for a maximum duration (seconds). Default is {options.DurationInSeconds}s", (double duration) => options.DurationInSeconds = duration },
                 { "keep-merged-etl-file", "Keep the merged ETL file. Without it (and without --nofilter) the ETL files are not merged: the profile is converted from the unmerged files directly.", v => options.KeepMergedEtl = v is not null },
-                { "keep-intermediate-etl-files", "Keep the intermediate ETL files before merging.", v => options.KeepEtlIntermediateFiles = v is not null },
+                { "keep-intermediate-etl-files", "Keep the intermediate trace files: the ETL files before merging, or on Linux the .ultraperf and CLR .nettrace files.", v => options.KeepEtlIntermediateFiles = v is not null },
                 { "nofilter", "Windows only: convert the full merged ETL file. By default only the CPU samples, stacks and context switches of the profiled process(es) are converted, which is much faster on a busy machine.", v => options.FastFilter = v is null },
                 { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
                     {
@@ -70,6 +77,13 @@ internal class Program
                 // Action for the commit command
                 async (ctx, arguments) =>
                 {
+                    // `--pmc list` (or help): the accepted counters, then exit
+                    if (options.HardwareCounters.Any(x => x.Equals("list", StringComparison.OrdinalIgnoreCase) || x.Equals("help", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        AnsiConsole.WriteLine(PerfEventSpec.ListText);
+                        return 0;
+                    }
+
                     if (arguments.Length == 0 && pidList.Count == 0)
                     {
                         AnsiConsole.MarkupLine("[red]Missing pid or executable name[/]");
@@ -78,7 +92,13 @@ internal class Program
 
                     if (!UltraProfiler.IsElevated())
                     {
-                        AnsiConsole.MarkupLine("[darkorange]This command requires to run with administrator rights[/]");
+                        AnsiConsole.MarkupLine($"[darkorange]{UltraProfiler.ElevationRequirement}[/]");
+                        return 1;
+                    }
+
+                    if (options.HardwareCounters.Count > 0 && !OperatingSystem.IsLinux())
+                    {
+                        AnsiConsole.MarkupLine("[red]--pmc (hardware counters) is only supported on Linux[/]");
                         return 1;
                     }
 
@@ -307,9 +327,9 @@ internal class Program
                     return 0;
                 }
             },
-            new Command("convert", "Convert an existing trace file (one ETL file or a list of nettrace files) to a Firefox Profiler json file")
+            new Command("convert", "Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .nettrace files, or a list of nettrace files) to a Firefox Profiler json file")
             {
-                new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <file1_sampler.nettrace> <file1_clr.nettrace>]"),
+                new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <trace.ultraperf> [<trace_pid_clr.nettrace>] | <file1_sampler.nettrace> <file1_clr.nettrace>]"),
                 _,
                 new HelpOption(),
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
@@ -427,6 +447,39 @@ internal class Program
                     PrintGeneratedFiles(fileOutputs);
 
                     return 0;
+                }
+            },
+            new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function. Streams the file: fine for a trace of hundreds of MB.")
+            {
+                new CommandUsage("Usage: {NAME} [Options] <profile.json.gz>"),
+                _,
+                new HelpOption(),
+                { "top=", "How many threads and functions to list. Default is 12.", (int v) => reportTop = v },
+                { "offsets", "Also the hot code offsets of the top 3 functions (where in a function's code the samples are).", v => reportOffsets = v is not null },
+                { "thread=", "Only the threads whose name contains {TEXT}.", v => reportThread = v },
+                { "workers=", "The parsing threads. Default is half the processors.", (int v) => reportWorkers = v },
+                { "<>", "The profile json.gz (or json) file" },
+                (ctx, arguments) =>
+                {
+                    if (arguments.Length != 1)
+                    {
+                        AnsiConsole.MarkupLine("[red]Expecting one profile file[/]");
+                        return ValueTask.FromResult(1);
+                    }
+
+                    if (!File.Exists(arguments[0]))
+                    {
+                        AnsiConsole.MarkupLine($"[red]File not found: {Markup.Escape(arguments[0])}[/]");
+                        return ValueTask.FromResult(1);
+                    }
+
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    new UltraProfileReport(reportTop, reportOffsets, reportThread, reportWorkers).Run(arguments[0], Console.Out);
+                    if (verbose)
+                    {
+                        Console.Error.WriteLine($"({clock.Elapsed.TotalSeconds:F1} s)");
+                    }
+                    return ValueTask.FromResult(0);
                 }
             }
         };

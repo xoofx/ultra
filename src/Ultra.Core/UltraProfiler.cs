@@ -57,12 +57,17 @@ public abstract class UltraProfiler : IDisposable
             return new UltraProfilerEtw();
         }
 
+        if (OperatingSystem.IsLinux())
+        {
+            return new UltraProfilerLinux();
+        }
+
         if (OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
         {
             return new UltraProfilerEventPipe();
         }
 
-        throw new PlatformNotSupportedException("Only Windows or macOS+ARM64 are supported");
+        throw new PlatformNotSupportedException("Only Windows, Linux or macOS+ARM64 are supported");
     }
 
     /// <summary>
@@ -114,8 +119,18 @@ public abstract class UltraProfiler : IDisposable
     {
         if (OperatingSystem.IsMacOS()) return true;
 
+        // Root, or a kernel that allows system-wide perf events to everyone
+        if (OperatingSystem.IsLinux()) return Linux.PerfEventCollector.HasPerfAccess();
+
         return IsElevatedWindows();
     }
+
+    /// <summary>
+    /// The message explaining the privileges required by <see cref="IsElevated"/> on the current platform.
+    /// </summary>
+    public static string ElevationRequirement => OperatingSystem.IsLinux()
+        ? "This command requires to run as root (sudo), or kernel.perf_event_paranoid <= 0"
+        : "This command requires to run with administrator rights";
 
     private static bool IsElevatedWindows()
     {

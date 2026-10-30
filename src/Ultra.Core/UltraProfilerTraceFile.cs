@@ -19,4 +19,9 @@ public readonly record struct UltraProfilerTraceFile(string FileName)
     /// Gets a value indicating whether the trace file is a Nettrace file.
     /// </summary>
     public bool IsNettrace => FileName.EndsWith(".nettrace", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets a value indicating whether the trace file is a Linux perf events file recorded by ultra.
+    /// </summary>
+    public bool IsUltraPerf => FileName.EndsWith(".ultraperf", StringComparison.OrdinalIgnoreCase);
 }

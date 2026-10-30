@@ -105,7 +105,8 @@ internal class DiagnosticPortSession
             // (the EventPipe session creation), not only for its synchronous prefix.
             _profilingTask = _connectTask.ContinueWith(async task =>
             {
-                if (task.IsFaulted)
+                // No connection (faulted, or cancelled at stop because the process has no diagnostic port): no session
+                if (task.IsFaulted || _diagnosticsClient is null)
                 {
                     return;
                 }
@@ -206,12 +207,14 @@ internal class DiagnosticPortSession
 
         try
         {
-            if (_profilingTask is null)
+            // We cancel any pending connection (a non .NET process never opens a diagnostic port: without this
+            // the stop would wait for it forever)
+            if (_profilingTask is null || !_connectTask.IsCompleted)
             {
-                // We cancel any pending connection
                 await _cancelConnectSource.CancelAsync();
             }
-            else
+
+            if (_profilingTask is not null)
             {
                 try
                 {

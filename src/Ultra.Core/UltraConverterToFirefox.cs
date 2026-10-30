@@ -121,6 +121,10 @@ public abstract class UltraConverterToFirefox : IDisposable
         {
             return new UltraConverterToFirefoxEventPipe(traceFiles, options);
         }
+        else if (extension == ".ultraperf")
+        {
+            return new UltraConverterToFirefoxLinux(traceFiles, options);
+        }
         else
         {
             throw new ArgumentException($"Unsupported trace file extension [{extension}]");
@@ -129,14 +133,20 @@ public abstract class UltraConverterToFirefox : IDisposable
 
     private static string GetExtension(List<UltraProfilerTraceFile> traceFiles)
     {
-        var extensions = traceFiles.Select(x => Path.GetExtension(x.FileName)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var extensions = traceFiles.Select(x => Path.GetExtension(x.FileName).ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+
+        // A Linux profile is a .ultraperf file plus the CLR .nettrace file of each .NET process
+        if (extensions.Contains(".ultraperf"))
+        {
+            extensions.Remove(".nettrace");
+        }
 
         if (extensions.Count != 1)
         {
             throw new ArgumentException($"All trace files must have the same extension. Instead got [{string.Join(", ", extensions)}]");
         }
 
-        return extensions.First().ToLowerInvariant();
+        return extensions.First();
     }
 
     private FirefoxProfiler.Profile Convert(List<int> processIds)

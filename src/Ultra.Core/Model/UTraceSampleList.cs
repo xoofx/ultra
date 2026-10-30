@@ -2,6 +2,8 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using XenoAtom.Collections;
+
 namespace Ultra.Core.Model;
 
 /// <summary>
@@ -21,4 +23,15 @@ public sealed class UTraceSampleList : UGenericList<UTraceSample>
     /// </summary>
     /// <param name="sample">The sample to add.</param>
     public void Add(UTraceSample sample) => List.Add(sample);
+
+    /// <summary>
+    /// Puts the samples in time order: a source reading the CPUs one after the other (Linux perf ring buffers) hands over the samples of a
+    /// thread that moved between CPUs out of order, and the Firefox profile wants the time deltas of a thread positive.
+    /// </summary>
+    public void SortByTimestamp() => List.AsSpan().SortByRef(new UTraceSampleTimestampComparer());
+
+    private readonly struct UTraceSampleTimestampComparer : IComparerByRef<UTraceSample>
+    {
+        public bool LessThan(in UTraceSample left, in UTraceSample right) => left.Timestamp < right.Timestamp;
+    }
 }
