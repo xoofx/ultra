@@ -333,6 +333,7 @@ Linux: needs root or kernel.perf_event_paranoid <= 0. macOS (ARM64): launch only
         var job = new UltraJob(id, kind, SelfCommandLine(arguments), resultFile, stopFile, new Process { StartInfo = startInfo, EnableRaisingEvents = true });
         job.Process.OutputDataReceived += (_, e) => job.AddOutput(e.Data);
         job.Process.ErrorDataReceived += (_, e) => job.AddOutput(e.Data);
+        job.Process.Exited += (_, _) => job.MarkExited();
         job.Process.Start();
         job.Process.StandardInput.Close();
         job.Process.BeginOutputReadLine();
@@ -461,6 +462,7 @@ Linux: needs root or kernel.perf_event_paranoid <= 0. macOS (ARM64): launch only
         private readonly Queue<string> _output = new();
         private int _totalOutputLines;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private long _elapsedTicksAtExit = -1;
 
         public int Id { get; } = id;
 
@@ -478,7 +480,28 @@ Linux: needs root or kernel.perf_event_paranoid <= 0. macOS (ARM64): launch only
 
         public string State => !Process.HasExited ? "running" : Process.ExitCode == 0 ? "succeeded" : "failed";
 
-        public TimeSpan Elapsed => Process.HasExited ? Process.ExitTime - Process.StartTime : _clock.Elapsed;
+        /// <summary>
+        /// The time since the start of the job, frozen when it exits. Measured with a clock of its own: on macOS,
+        /// <see cref="System.Diagnostics.Process.StartTime"/> throws once the process has exited.
+        /// </summary>
+        public TimeSpan Elapsed
+        {
+            get
+            {
+                if (Process.HasExited)
+                {
+                    MarkExited();
+                }
+
+                var ticksAtExit = Interlocked.Read(ref _elapsedTicksAtExit);
+                return ticksAtExit >= 0 ? TimeSpan.FromTicks(ticksAtExit) : _clock.Elapsed;
+            }
+        }
+
+        /// <summary>
+        /// Freezes <see cref="Elapsed"/> (called when the process exits, or when its exit is first seen).
+        /// </summary>
+        public void MarkExited() => Interlocked.CompareExchange(ref _elapsedTicksAtExit, _clock.Elapsed.Ticks, -1);
 
         public void RequestStop()
         {

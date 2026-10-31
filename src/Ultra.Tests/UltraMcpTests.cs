@@ -80,6 +80,13 @@ public class UltraMcpTests
             StringAssert.Contains(stopped, Path.Combine(directory, "fake.json.gz"));
             StringAssert.Contains(stopped, "fake ultra started");
             StringAssert.Contains(stopped, "get_profile_report");
+
+            // The elapsed time is frozen at the exit, without Process.StartTime (it throws on macOS after the exit)
+            var job = UltraJobs.GetJob(jobId);
+            var elapsedAtExit = job.Elapsed;
+            await Task.Delay(200);
+            Assert.AreEqual(elapsedAtExit, job.Elapsed);
+            StringAssert.Contains(await UltraJobs.GetJobStatus(jobId), "state: succeeded");
         }
         finally
         {
