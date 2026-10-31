@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Buffers;
+using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -111,28 +112,32 @@ public sealed partial class UltraProfileReport
         var threads = tallies.Sum(t => t.Threads);
         var totalCpu = cpuThreads.Sum(x => x.CpuMs);
 
-        o.WriteLine($"product={meta.Product} abi={meta.Abi} cpus={meta.Cpus} duration={meta.DurationMs / 1000:F1} s");
+        // The report is read by tools and agents (`ultra report`, MCP): the same numbers whatever the culture of the machine
+        void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
+
+        Line($"product={meta.Product} abi={meta.Abi} cpus={meta.Cpus} duration={meta.DurationMs / 1000:F1} s");
         o.WriteLine();
-        o.WriteLine($"{threads} threads in the file: {cpuThreads.Count} CPU threads and {counters.Values.Sum(x => x.Tracks)} counter tracks{(counters.Count > 0 ? $" ({string.Join(", ", counters.OrderBy(x => x.Key).Select(x => $"{x.Key}: {x.Value.Tracks}"))})" : "")}");
-        o.WriteLine($"CPU: {totalCpu / 1000:F1} s over {meta.DurationMs / 1000:F1} s = {totalCpu / Math.Max(1, meta.DurationMs):F2} cores busy on average, {cpuThreads.Sum(x => (long)x.Samples):N0} samples");
+        var counterTracks = string.Join(", ", counters.OrderBy(x => x.Key).Select(x => FormattableString.Invariant($"{x.Key}: {x.Value.Tracks}")));
+        Line($"{threads} threads in the file: {cpuThreads.Count} CPU threads and {counters.Values.Sum(x => x.Tracks)} counter tracks{(counters.Count > 0 ? $" ({counterTracks})" : "")}");
+        Line($"CPU: {totalCpu / 1000:F1} s over {meta.DurationMs / 1000:F1} s = {totalCpu / Math.Max(1, meta.DurationMs):F2} cores busy on average, {cpuThreads.Sum(x => (long)x.Samples):N0} samples");
         o.WriteLine("per thread (samples, CPU ms, share of the process CPU):");
         var rows = cpuThreads.OrderByDescending(x => x.CpuMs).ThenBy(x => x.Name, StringComparer.Ordinal).ToList();
         foreach (var (name, n, cpu) in rows.Take(Top))
         {
-            o.WriteLine($"  {name,-44} {n,9:N0} {cpu,10:N0} ms {(totalCpu > 0 ? cpu / totalCpu * 100 : 0),5:F1}%");
+            Line($"  {name,-44} {n,9:N0} {cpu,10:N0} ms {(totalCpu > 0 ? cpu / totalCpu * 100 : 0),5:F1}%");
         }
         if (rows.Count > Top)
         {
             var rest = rows.Skip(Top).Sum(x => x.CpuMs);
-            o.WriteLine($"  ... {rows.Count - Top} more threads {rest,24:N0} ms {(totalCpu > 0 ? rest / totalCpu * 100 : 0),5:F1}%");
+            Line($"  ... {rows.Count - Top} more threads {rest,24:N0} ms {(totalCpu > 0 ? rest / totalCpu * 100 : 0),5:F1}%");
         }
 
         var n2 = cpuLeaf.Values.Sum();
         o.WriteLine();
-        o.WriteLine($"top leaf functions over all CPU threads ({n2:N0} samples):");
+        Line($"top leaf functions over all CPU threads ({n2:N0} samples):");
         foreach (var (leaf, c) in cpuLeaf.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Take(Top))
         {
-            o.WriteLine($"  {c,10:N0} {c * 100.0 / Math.Max(1, n2),5:F1}%  {leaf}");
+            Line($"  {c,10:N0} {c * 100.0 / Math.Max(1, n2),5:F1}%  {leaf}");
         }
 
         if (CodeOffsets)
@@ -143,10 +148,10 @@ public sealed partial class UltraProfileReport
                 if (byOffset.Count == 0) continue;
                 var total = byOffset.Values.Sum();
                 o.WriteLine();
-                o.WriteLine($"hot code offsets in {leaf} ({total:N0} samples with an address, {byOffset.Count} distinct):");
+                Line($"hot code offsets in {leaf} ({total:N0} samples with an address, {byOffset.Count} distinct):");
                 foreach (var (offset, c) in byOffset.OrderByDescending(x => x.Value).ThenBy(x => x.Key).Take(10))
                 {
-                    o.WriteLine($"  +0x{offset:x}: {c:N0} ({c * 100.0 / total:F1}%)");
+                    Line($"  +0x{offset:x}: {c:N0} ({c * 100.0 / total:F1}%)");
                 }
             }
         }
@@ -155,10 +160,10 @@ public sealed partial class UltraProfileReport
         {
             var leafs = Merge(tallies.Select(t => t.CounterLeaf.GetValueOrDefault(counter)).Where(x => x != null)!);
             o.WriteLine();
-            o.WriteLine($"counter [{counter}]: {tracks} tracks, {samples:N0} samples standing for {events:N0} events; top leaf functions by events:");
+            Line($"counter [{counter}]: {tracks} tracks, {samples:N0} samples standing for {events:N0} events; top leaf functions by events:");
             foreach (var (leaf, c) in leafs.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Take(Top))
             {
-                o.WriteLine($"  {c,16:N0} {(events > 0 ? c * 100.0 / events : 0),5:F1}%  {leaf}");
+                Line($"  {c,16:N0} {(events > 0 ? c * 100.0 / events : 0),5:F1}%  {leaf}");
             }
         }
     }

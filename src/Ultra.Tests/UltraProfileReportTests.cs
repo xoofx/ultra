@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Ultra.Core;
@@ -14,10 +15,27 @@ public class UltraProfileReportTests
 {
     /// <summary>
     /// A profile of two CPU threads and one counter track, written with the profile model and read back by the report: the CPU, the
-    /// shares, the leaf functions, the code offsets and the counter events; the counter track is not counted as CPU.
+    /// shares, the leaf functions, the code offsets and the counter events; the counter track is not counted as CPU. The numbers do
+    /// not depend on the culture of the machine (a regression: <c>duration=2,0 s</c> with a French region).
     /// </summary>
     [TestMethod]
-    public void ReportSumsCpuThreadsApartFromCounterTracks()
+    [DataRow("en-US")]
+    [DataRow("fr-FR")]
+    public void ReportSumsCpuThreadsApartFromCounterTracks(string culture)
+    {
+        var previousCulture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+        try
+        {
+            AssertReportSumsCpuThreadsApartFromCounterTracks();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+        }
+    }
+
+    private static void AssertReportSumsCpuThreadsApartFromCounterTracks()
     {
         var profile = new FirefoxProfiler.Profile();
         profile.Meta.Product = "Test";
