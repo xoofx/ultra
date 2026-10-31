@@ -275,9 +275,11 @@ internal class DiagnosticPortSession
                         await _nettraceFileStream.DisposeAsync().ConfigureAwait(false);
                         _nettraceFileStream = null;
 
-                        // If the target process exits before it observes StopAsync, the runtime can close the
-                        // EventPipe stream at a block boundary without the final EndOfStream block. TraceEvent
-                        // treats that as a truncated file, so repair that narrow, lossless case before conversion.
+                        // If the target process exits before it observes StopAsync, the runtime closes the
+                        // EventPipe stream without the final EndOfStream block, at a block boundary or in the middle
+                        // of a block it was writing (seen on slow CI machines). TraceEvent fails on such a truncated
+                        // file ("Read past end of stream"), so drop the partial trailing block, if any, and end the
+                        // stream after the last complete block before conversion.
                         if (_nettraceFilePath is not null)
                         {
                             TryAppendMissingEndOfStreamBlock(_nettraceFilePath);
@@ -386,31 +388,33 @@ internal class DiagnosticPortSession
                 return false;
             }
 
-            sawBlock = true;
             var blockHeader = BinaryPrimitives.ReadInt32LittleEndian(blockHeaderBytes);
             var blockKind = (int)((uint)blockHeader >> 24);
             var blockLength = blockHeader & 0x00FF_FFFF;
-            offset += blockHeaderLength;
 
             if (blockKind == endOfStreamBlockKind)
             {
                 return true;
             }
 
-            if (offset + blockLength > fileLength)
+            if (offset + blockHeaderLength + blockLength > fileLength)
             {
-                return false;
+                // Truncated block: dropped below
+                break;
             }
 
-            offset += blockLength;
+            sawBlock = true;
+            offset += blockHeaderLength + blockLength;
         }
 
-        if (!sawBlock || offset != fileLength)
+        if (!sawBlock)
         {
             return false;
         }
 
-        stream.Position = fileLength;
+        // Drop a partial trailing block (or block header), if any, then end the stream after the last complete block
+        stream.SetLength(offset);
+        stream.Position = offset;
         blockHeaderBytes.Clear();
         stream.Write(blockHeaderBytes);
         return true;
@@ -446,48 +450,66 @@ internal class DiagnosticPortSession
         var maximumBlockNameLength = "Microsoft.DotNet.Runtime.EventPipeFile"u8.Length;
         Span<byte> typeNameBuffer = stackalloc byte[maximumBlockNameLength];
 
+        // offset is always the end of the last complete object: a partial trailing object is dropped below
         while (offset < fileLength)
         {
             stream.Position = offset;
+            var objectOffset = offset;
             var tag = stream.ReadByte();
             if (tag < 0)
             {
                 return false;
             }
 
-            offset++;
+            objectOffset++;
             if (tag == nullReferenceTag)
             {
                 return true;
             }
 
-            if (tag != beginPrivateObjectTag || !TryReadExpectedByte(stream, beginPrivateObjectTag, ref offset) || !TryReadExpectedByte(stream, nullReferenceTag, ref offset))
+            if (tag != beginPrivateObjectTag)
             {
                 return false;
             }
 
-            if (!TryReadInt32(stream, int32Bytes, ref offset, out var version) ||
-                !TryReadInt32(stream, int32Bytes, ref offset, out _) ||
-                !TryReadInt32(stream, int32Bytes, ref offset, out var typeNameLength))
+            var status = ReadExpectedByte(stream, beginPrivateObjectTag, ref objectOffset);
+            status = status == ReadStatus.Ok ? ReadExpectedByte(stream, nullReferenceTag, ref objectOffset) : status;
+            var version = 0;
+            var typeNameLength = 0;
+            status = status == ReadStatus.Ok ? ReadInt32(stream, int32Bytes, ref objectOffset, out version) : status;
+            status = status == ReadStatus.Ok ? ReadInt32(stream, int32Bytes, ref objectOffset, out _) : status;
+            status = status == ReadStatus.Ok ? ReadInt32(stream, int32Bytes, ref objectOffset, out typeNameLength) : status;
+            if (status == ReadStatus.Invalid)
             {
                 return false;
             }
 
-            if (typeNameLength <= 0 || typeNameLength > maximumBlockNameLength || offset + typeNameLength + 1 > fileLength)
+            if (status == ReadStatus.Truncated)
+            {
+                break;
+            }
+
+            if (typeNameLength <= 0 || typeNameLength > maximumBlockNameLength)
             {
                 return false;
             }
 
             var typeName = typeNameBuffer[..typeNameLength];
-            if (stream.Read(typeName) != typeName.Length)
+            if (stream.ReadAtLeast(typeName, typeName.Length, throwOnEndOfStream: false) != typeName.Length)
+            {
+                break;
+            }
+
+            objectOffset += typeNameLength;
+            status = ReadExpectedByte(stream, endObjectTag, ref objectOffset);
+            if (status == ReadStatus.Invalid)
             {
                 return false;
             }
 
-            offset += typeNameLength;
-            if (!TryReadExpectedByte(stream, endObjectTag, ref offset))
+            if (status == ReadStatus.Truncated)
             {
-                return false;
+                break;
             }
 
             int blockSize;
@@ -505,72 +527,91 @@ internal class DiagnosticPortSession
                      typeName.SequenceEqual("EventBlock"u8) ||
                      typeName.SequenceEqual("SPBlock"u8))
             {
-                if (version > 2 || !TryReadInt32(stream, int32Bytes, ref offset, out blockSize) || blockSize < 0)
+                if (version > 2)
                 {
                     return false;
                 }
 
-                var alignmentPadding = (4 - ((int)offset & 0x3)) & 0x3;
-                if (offset + alignmentPadding > fileLength)
+                if (ReadInt32(stream, int32Bytes, ref objectOffset, out blockSize) == ReadStatus.Truncated)
+                {
+                    break;
+                }
+
+                if (blockSize < 0)
                 {
                     return false;
                 }
 
-                offset += alignmentPadding;
-                stream.Position = offset;
+                objectOffset += (4 - ((int)objectOffset & 0x3)) & 0x3;
             }
             else
             {
                 return false;
             }
 
-            if (offset + blockSize > fileLength)
+            // The block payload and the end object tag
+            if (objectOffset + blockSize + 1 > fileLength)
+            {
+                break;
+            }
+
+            objectOffset += blockSize;
+            stream.Position = objectOffset;
+            if (ReadExpectedByte(stream, endObjectTag, ref objectOffset) != ReadStatus.Ok)
             {
                 return false;
             }
 
-            offset += blockSize;
-            stream.Position = offset;
-            if (!TryReadExpectedByte(stream, endObjectTag, ref offset))
-            {
-                return false;
-            }
-
+            offset = objectOffset;
             sawBlock = true;
         }
 
-        if (!sawBlock || offset != fileLength)
+        if (!sawBlock)
         {
             return false;
         }
 
-        stream.Position = fileLength;
+        // Drop a partial trailing object, if any, then end the stream after the last complete object
+        stream.SetLength(offset);
+        stream.Position = offset;
         stream.WriteByte(nullReferenceTag);
         return true;
     }
 
-    private static bool TryReadInt32(Stream stream, Span<byte> buffer, ref long offset, out int value)
+    private static ReadStatus ReadInt32(Stream stream, Span<byte> buffer, ref long offset, out int value)
     {
-        if (stream.Read(buffer) != buffer.Length)
+        if (stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false) != buffer.Length)
         {
             value = 0;
-            return false;
+            return ReadStatus.Truncated;
         }
 
         value = BinaryPrimitives.ReadInt32LittleEndian(buffer);
         offset += buffer.Length;
-        return true;
+        return ReadStatus.Ok;
     }
 
-    private static bool TryReadExpectedByte(Stream stream, byte expected, ref long offset)
+    private static ReadStatus ReadExpectedByte(Stream stream, byte expected, ref long offset)
     {
         var value = stream.ReadByte();
+        if (value < 0)
+        {
+            return ReadStatus.Truncated;
+        }
+
         if (value != expected)
         {
-            return false;
+            return ReadStatus.Invalid;
         }
 
         offset++;
-        return true;
+        return ReadStatus.Ok;
+    }
+
+    private enum ReadStatus
+    {
+        Ok,
+        Truncated,
+        Invalid,
     }
 }
