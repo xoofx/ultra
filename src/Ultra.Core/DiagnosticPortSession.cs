@@ -31,6 +31,12 @@ internal class DiagnosticPortSession
     private Task? _eventStreamCopyTask;
     private bool _disposed;
 
+    /// <summary>
+    /// How long to wait for the injected sampler to open its diagnostic port socket (it opens it within milliseconds
+    /// normally). Only changed by tests, to make the connection fail.
+    /// </summary>
+    internal static TimeSpan SamplerConnectTimeout = TimeSpan.FromSeconds(5);
+
     public DiagnosticPortSession(int pid, bool sampler, string baseName, CancellationToken token)
     {
         _pid = pid;
@@ -64,7 +70,7 @@ internal class DiagnosticPortSession
             if (_sampler)
             {
                 // Give enough time to the injected sampler (NativeAOT) to boot and create the diagnostic port socket
-                _cancelConnectSource.CancelAfter(5000);
+                _cancelConnectSource.CancelAfter(SamplerConnectTimeout);
             }
 
             var connectionAddress = await TryFindConnectionAddress(_pid, _sampler, connectCancellationToken).ConfigureAwait(false);

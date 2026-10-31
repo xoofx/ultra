@@ -34,6 +34,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         }
 
         UltraSamplerProfilerState? profilerState = null;
+        Process? launchedProcess = null;
 
         var runner = new ProfilerRunner(baseName)
         {
@@ -49,6 +50,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
 
             OnProcessStarted = (process) =>
             {
+                launchedProcess = process;
                 profilerState = new UltraSamplerProfilerState(baseName, process.Id, CancellationToken);
                 return Task.CompletedTask;
             },
@@ -61,7 +63,27 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
                 }
             },
 
-            OnCatch = () => Task.CompletedTask,
+            OnCatch = async () =>
+            {
+                // The profiling failed (e.g. the injected sampler did not open its diagnostic port in time): the program
+                // was launched only to be profiled, don't leave it running unprofiled, its output relayed to no one
+                if (launchedProcess is not null)
+                {
+                    KillLaunchedProcess(launchedProcess, ultraProfilerOptions);
+                }
+
+                if (profilerState is not null)
+                {
+                    try
+                    {
+                        await profilerState.StopAndDisposeAsync();
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
+                }
+            },
 
             OnFinally = () => Task.CompletedTask,
 
@@ -91,6 +113,25 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         return runner;
     }
 
+
+    private static void KillLaunchedProcess(Process process, UltraProfilerOptions ultraProfilerOptions)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            ultraProfilerOptions.LogProgress?.Invoke($"Stopping the launched process ({process.Id}), the profiling has failed");
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5000);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            // Already exited, or cannot be killed: nothing more to do
+        }
+    }
 
     private static void SetupUltraSampler(ProcessStartInfo startInfo, UltraProfilerOptions ultraProfilerOptions)
     {
