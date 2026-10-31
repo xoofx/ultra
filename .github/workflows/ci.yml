@@ -10,7 +10,9 @@ on:
   pull_request:
 
 jobs:
+  # Build, test, pack and publish (on a tag) with dotnet-releaser: only once macOS and Linux pass
   build:
+    needs: [build-macos, build-linux]
     permissions:
       id-token: write
       actions: write
@@ -44,5 +46,54 @@ jobs:
       - name: Smoke test profiling
         working-directory: src
         run: |
-          ./Ultra/bin/Release/net10.0/ultra profile --duration 10 -- Ultra.Example/bin/Release/net10.0/Ultra.Example
+          # The conversion of the sampler traces fails now and then with "Read past end of stream" (a truncated
+          # nettrace): retry once, visibly, and keep the trace files of the failure (artifact below)
+          for attempt in 1 2; do
+            if ./Ultra/bin/Release/net10.0/ultra --verbose profile --duration 10 -- Ultra.Example/bin/Release/net10.0/Ultra.Example; then
+              break
+            fi
+            if [ "$attempt" = "2" ]; then
+              exit 1
+            fi
+            echo "::warning::The macOS profiling smoke test failed: retrying once (its trace files are in the smoke-traces-macos artifact)"
+          done
           ls -la *.json.gz
+
+      - name: Upload the traces of a failed smoke test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-traces-macos
+          path: src/*.nettrace
+          if-no-files-found: ignore
+
+  build-linux:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build ./src/ultra.slnx -c Release
+
+      - name: Test
+        run: dotnet test ./src/ultra.slnx -c Release --no-build
+
+      - name: Allow perf events
+        # ultra profiles without root when the kernel allows perf events to everyone (and shows the kernel symbols)
+        run: |
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+
+      - name: Smoke test profiling
+        working-directory: src
+        run: |
+          ./Ultra/bin/Release/net10.0/ultra --verbose profile --duration 10 --result-file result.json -- Ultra.Example/bin/Release/net10.0/Ultra.Example
+          ls -la *.json.gz
+          cat result.json
+          ./Ultra/bin/Release/net10.0/ultra report --top 5 *.json.gz
