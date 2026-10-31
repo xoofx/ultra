@@ -4,7 +4,7 @@
 
 using System.Globalization;
 using System.Runtime.CompilerServices;
-using VerifyTests.DiffPlex;
+using DiffEngine;
 
 namespace Ultra.Tests;
 
@@ -13,7 +13,7 @@ internal static class TestsInitializer
     [ModuleInitializer]
     public static void Initialize()
     {
-        VerifyDiffPlex.Initialize(OutputType.Compact);
+        VerifierSettings.UseTextDiffFormat(TextDiffFormat.Compact);
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         Verifier.UseProjectRelativeDirectory("Verified");
         DiffEngine.DiffRunner.Disabled = true;
