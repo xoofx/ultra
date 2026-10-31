@@ -2,7 +2,7 @@
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/xoofx/ultra/main/img/ultra.png">
 
-Ultra is an advanced profiler for .NET Applications available on Windows, Linux and macOS (Apple Silicon).
+Ultra is an advanced profiler for .NET and Native Applications available on Windows, Linux and macOS (Apple Silicon).
 
 > 📽️ Check this [video](https://vimeo.com/1030852299) for a quick tour of ultra! 📽️
 
