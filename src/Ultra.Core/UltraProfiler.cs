@@ -491,7 +491,19 @@ public abstract class UltraProfiler : IDisposable
 
         ultraProfilerOptions.LogProgress?.Invoke($"Starting Process {startInfo.FileName} {string.Join(" ", startInfo.ArgumentList)}");
 
-        if (mode == UltraProfilerConsoleMode.Silent)
+        if (ultraProfilerOptions.ProgramStarter is { } programStarter)
+        {
+            // The program is started by someone else (e.g. the non-elevated ultra that started this elevated one):
+            // the console mode and the output redirection are its responsibility
+            if (runner.OnPrepareStartProcess != null)
+            {
+                await runner.OnPrepareStartProcess(startInfo);
+            }
+
+            process.Dispose();
+            process = await programStarter(startInfo);
+        }
+        else if (mode == UltraProfilerConsoleMode.Silent)
         {
             startInfo.UseShellExecute = true;
             startInfo.CreateNoWindow = true;

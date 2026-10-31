@@ -1,0 +1,35 @@
+Ultra THIRD-PARTY NOTICES
+=========================
+
+The `ultra mcp` server (src/Ultra.Mcp) includes code imported from the following
+third-party project. Its original copyright notice and license terms are reproduced
+below, as required.
+
+--------------------------------------------------------------------------------
+
+UltraMcp (https://github.com/KirillOsenkov/UltraMcp)
+Files: src/Ultra.Mcp/UltraCache.cs, src/Ultra.Mcp/UltraTools*.cs, src/Ultra.Mcp/LlmGuide.md
+Imported from commit 434b5bc6aaf3c2e7a1673fb19d89f2dc6da9c91a, then adapted to Ultra
+(the Firefox Profiler schema now comes from Ultra.Core, and new tools were added).
+
+MIT License
+
+Copyright (c) 2026 Kirill Osenkov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -16,6 +16,12 @@ $ ultra.exe profile -- my_command.exe arg0 arg1 arg2...
 
 This will create a `ultra_my_command_..._.json.gz` trace file in the current directory.
 
+From a terminal without administrative rights (or from a script or an AI agent), add `--elevate` on Windows: ultra asks for the rights with a UAC prompt and runs the profiling in an elevated ultra, whose progress, exit code and program output are relayed to your terminal. CTRL+C still stops it, and a program launched after `--` still runs as you, not elevated:
+
+```console
+$ ultra.exe profile --elevate -- my_command.exe arg0 arg1 arg2...
+```
+
 By default, ultra won't show the stdout/stderr of the program launched. You can change this behavior by specifying the `--mode` option:
 
 - `silent` (default): won't mix program's output
@@ -160,64 +166,95 @@ You can also see them in the Marker Chart and Marker Table view.
 
 ## Ultra Command Line
 
-ultra.exe command line options:
+ultra.exe command line options (`ultra <command> --help` for the options of a command):
 
 ```console
 Usage: ultra [Options] command
 
-  -h, -?, --help                    Show this message and exit
-  -v, --version                     Show the version of this command
-      --verbose                     Display verbose progress
+  -h, -?, --help             Show this message and exit
+  -v, --version              Show the version of this command
+      --verbose              Display verbose progress
 
 Available commands:
-  profile                           Profile a new process or attach to an existing process
-  convert                           Convert an existing ETL file to a Firefox Profiler json file
-  report                            Print a text report of a Firefox Profiler json file written by ultra
+  profile                    Profile a new process or attach to an existing process
+  convert                    Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .
+                               nettrace files, or a list of nettrace files) to a Firefox Profiler json file
+  report                     Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread,
+                               the top functions, the hardware counters per function. Streams the file: fine for a
+                               trace of hundreds of MB.
+  mcp                        Run the ultra MCP server (Model Context Protocol, stdio): AI agents capture profiles and
+                               analyze them with its tools
+  guide                      Print the guide for AI agents and automation: capture a profile, read the result, analyze
+                               it (report, MCP tools)
+
+Automation and AI agents:
+  ultra guide                       The workflow for agents and scripts: capture, results, analysis, MCP
+  ultra profile --elevate --duration 30 --result-file result.json --pid 1234
+                                    Capture from a non-admin shell (Windows UAC prompt), JSON summary
+  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions
+  ultra mcp                         MCP server (stdio) to capture and analyze profiles from an agent
 ```
 
 ### Profile
 
-This is the main command to profile an application - Only working within an elevated prompt:
+This is the main command to profile an application - it requires an elevated prompt on Windows, or `--elevate` to ask for it:
 
 ```console
 Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
 
-  -h, -?, --help                    Show this message and exit
-  -o, --output=FILE                 The base output FILE name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.
-      --pid=PID                     The PID of the process to attach the profiler to. Several pids can be separated
-                                      by commas (or the option repeated): each process gets its own json file.
-      --sampling-interval=VALUE     The VALUE of the sample interval in ms. Default is 8190Hz = 0.122ms.
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
-                                      Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
-                                      Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
-                                      symbols`.
-      --pmc=NAME                    Linux only: hardware counters to sample besides the CPU time, comma separated
-                                      NAME[:PERIOD] (default: adaptive 4000 samples/s per CPU). Each counter adds a
-                                      `[name]` track per thread, weighted by the counts. Names, generic: cycles,
-                                      cpu-cycles, instructions, cache-references, cache-misses, branches,
-                                      branch-instructions, branch-misses, bus-cycles, stalled-cycles-frontend,
-                                      stalled-cycles-backend, ref-cycles; cache: <cache>-<op> with cache = L1-dcache,
-                                      L1-icache, LLC, dTLB, iTLB, branch, node and op = loads, load-misses, stores,
-                                      store-misses, prefetches, prefetch-misses (e.g. L1-dcache-load-misses,
-                                      LLC-load-misses, dTLB-load-misses); raw: rHEX, the CPU's event code as for
-                                      `perf stat -e rHEX` (e.g. r0843). `--pmc list` prints them all.
-      --pmc-frequency=VALUE         Linux only: the samples per second per CPU the kernel aims at for a --pmc counter
-                                      given without a period. Default is 4000.
-      --paused                      Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
-      --delay=VALUE                 Starts profiling after a specific delay (seconds). Default is 0s.
-      --duration=VALUE              Run the profiler for a maximum duration (seconds). Default is 120s
-      --keep-merged-etl-file        Keep the merged ETL file. Without it (and without --nofilter) the ETL files are
-                                      not merged: the profile is converted from the unmerged files directly.
-      --keep-intermediate-etl-files Keep the intermediate trace files: the ETL files before merging, or on Linux the
-                                      .ultraperf and CLR .nettrace files.
-      --nofilter                    Windows only: convert the full merged ETL file. By default only the CPU samples,
-                                      stacks and context switches of the profiled process(es) are converted, which is
-                                      much faster on a busy machine.
-      --mode=VALUE                  Defines how the stdout/stderr of a program explicitly started by ultra should be
-                                      integrated in its output. Default is `silent` which will not mix program's
-                                      output. The other options are: `raw` is going to mix ultra and program output
-                                      together in a raw output. `live` is going to mix ultra and program output
-                                      within a live table.
+  -h, -?, --help             Show this message and exit
+  -o, --output=FILE          The base output FILE name. Default is ultra_<process_name>_yyyy-MM-dd_HH_mm_ss.
+      --pid=PID              The PID of the process to attach the profiler to. Several pids can be separated by commas (
+                               or the option repeated): each process gets its own json file.
+      --sampling-interval=VALUE
+                             The VALUE of the sample interval in ms. Default is 0.122ms (8190Hz).
+      --symbol-path=VALUE    The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\Local\Temp\
+                               SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\alexa\AppData\Local\
+                               Temp\SymbolCache*https://symbols.nuget.org/download/symbols`.
+      --pmc=NAME             Linux only: hardware counters to sample besides the CPU time, comma separated NAME[:PERIOD]
+                                (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per
+                               thread, weighted by the counts. Names, generic: cycles, cpu-cycles, instructions, cache-
+                               references, cache-misses, branches, branch-instructions, branch-misses, bus-cycles,
+                               stalled-cycles-frontend, stalled-cycles-backend, ref-cycles; cache: <cache>-<op> with
+                               cache = L1-dcache, L1-icache, LLC, dTLB, iTLB, branch, node and op = loads, load-misses,
+                               stores, store-misses, prefetches, prefetch-misses (e.g. L1-dcache-load-misses, LLC-load-
+                               misses, dTLB-load-misses); raw: rHEX, the CPU's event code as for `perf stat -e rHEX` (e.
+                               g. r0843). `--pmc list` prints them all.
+      --pmc-frequency=VALUE  Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given
+                               without a period. Default is 4000.
+      --paused               Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
+      --delay=VALUE          Starts profiling after a specific delay (seconds). Default is 0s.
+      --duration=VALUE       Run the profiler for a maximum duration (seconds). Default is 120s
+      --keep-merged-etl-file Keep the merged ETL file. Without it (and without --nofilter) the ETL files are not merged:
+                                the profile is converted from the unmerged files directly.
+      --keep-intermediate-etl-files
+                             Keep the intermediate trace files: the ETL files before merging, or on Linux the .
+                               ultraperf and CLR .nettrace files.
+      --nofilter             Windows only: convert the full merged ETL file. By default only the CPU samples, stacks
+                               and context switches of the profiled process(es) are converted, which is much faster on
+                               a busy machine.
+      --mode=VALUE           Defines how the stdout/stderr of a program explicitly started by ultra should be
+                               integrated in its output. Default is `silent` which will not mix program's output. The
+                               other options are: `raw` is going to mix ultra and program output together in a raw
+                               output. `live` is going to mix ultra and program output within a live table.
+  [args]...                  Exec to launch with arguments passed
+
+Automation (scripts, AI agents):
+      --elevate              Windows only: when ultra does not run as administrator, ask for it with a UAC prompt and
+                               run the profiling in an elevated ultra. Its progress, the output of the program and its
+                               exit code are relayed to this console, CTRL+C still stops it. A program launched after --
+                                still runs as the current user, not elevated.
+      --result-file=FILE     Write a JSON summary to FILE when the command ends: success, exitCode, error, stopped and
+                               the profiles written (path, size). The way for a script or an agent to find the json.gz
+                               files.
+      --stop-file=FILE       Stop profiling as soon as FILE exists (created by another process): the profile is still
+                               converted and written, like with CTRL+C. The file is deleted at start if it exists.
+
+Examples:
+  ultra profile --duration 10 -- my_app.exe arg0     Launch my_app.exe and profile its first 10 seconds
+  ultra profile --pid 1234,5678                      Attach to running processes until they exit (or 120s)
+  ultra profile --elevate --duration 30 --result-file result.json --pid 1234
+                                                     From a non-admin shell or an agent (Windows)
 ```
 
 ### Convert
@@ -227,19 +264,21 @@ Convert an existing trace (a Windows ETL file, a Linux .ultraperf file with its 
 It requires a list of PID in order to only produce results for these processes. 
 
 ```console
-Usage: ultra convert --pid xxx <etl_file_name.etl | trace.ultraperf [trace_<pid>_clr.nettrace] | <file1_sampler.nettrace> <file1_clr.nettrace>>
+Usage: ultra convert --pid xxx [<etl_file_name.etl> | <trace.ultraperf> [<trace_pid_clr.nettrace>] | <file1_sampler.
+nettrace> <file1_clr.nettrace>]
 
-  -h, -?, --help                    Show this message and exit
-  -o, --output=FILE                 The base output FILE name. Default is the input file name without the extension.
-      --pid=PID                     The PID of the process. Several pids can be separated by commas (or the option
-                                      repeated): each process gets its own json file.
-      --symbol-path=VALUE           The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\
-                                      Local\Temp\SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\
-                                      Users\alexa\AppData\Local\Temp\SymbolCache*https://symbols.nuget.org/download/
-                                      symbols`.
-      --nofilter                    ETL only: convert the full ETL file. By default only the CPU samples, stacks and
-                                      context switches of the --pid process(es) are converted, which is much faster on
-                                      a busy machine; that filtered .etlx file is kept next to the ETL file and reused.
+  -h, -?, --help             Show this message and exit
+  -o, --output=FILE          The base output FILE name. Default is the input file name without the extension.
+      --pid=PID              The PID of the process. Several pids can be separated by commas (or the option repeated):
+                               each process gets its own json file.
+      --symbol-path=VALUE    The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\Local\Temp\
+                               SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\alexa\AppData\Local\
+                               Temp\SymbolCache*https://symbols.nuget.org/download/symbols`.
+      --nofilter             ETL only: convert the full ETL file. By default only the CPU samples, stacks and context
+                               switches of the --pid process(es) are converted, which is much faster on a busy machine;
+                               that filtered .etlx file is kept next to the ETL file and reused.
+      --result-file=FILE     Write a JSON summary to FILE when the command ends (see `ultra profile --help`).
+  [args]...                  The trace file(s) to convert
 ```
 
 ### Report
@@ -258,3 +297,50 @@ Usage: ultra report [Options] <profile.json.gz>
 ```
 
 It prints the CPU time of each thread and its share of the process, the top leaf functions over all threads, and for each hardware counter of `--pmc` its events per function. The `[counter]` tracks are reported apart from the CPU threads: a plain sum over all the threads of the file would count them as CPU time.
+
+### MCP server
+
+`ultra mcp` runs an MCP (Model Context Protocol) server on stdio, for AI coding agents. Configure your agent with a stdio server whose command is `ultra` with the argument `mcp`:
+
+- Claude Code: `claude mcp add ultra -- ultra mcp`
+- VS Code (`.vscode/mcp.json`): `{ "servers": { "ultra": { "type": "stdio", "command": "ultra", "args": ["mcp"] } } }`
+
+Its tools:
+
+- capture, as background jobs of the ultra command line: `find_processes`, `start_profiling` (pids, or a program to launch), `start_conversion`, `get_job_status` (waits for the end of a job and lists the profile files written), `stop_job` (stops a capture early, the profile is still written), `list_jobs`. On Windows, `start_profiling` shows a UAC prompt to the user when the server does not run as administrator. Unless the job is given a `workingDirectory` or an `output`, the profiles are written in `%LOCALAPPDATA%\ultra\profiles` (Windows) or `~/.local/share/ultra/profiles`, and a conversion writes them next to its trace;
+- analysis of the `json.gz` profiles: `get_profile_report` (the `ultra report` overview), `load_profile`, `get_profile_summary`, `list_threads`, `call_tree`, `call_tree_inverted`, `find_hotspots`, `focus_function`, `module_breakdown`, `top_functions`, `list_samples`, `get_sample`, `get_call_stack`, `query_markers`, `list_counters`, `counter_samples`, and `get_llm_guide` (the field manual of the format for the agent).
+
+The analysis tools come from [UltraMcp](https://github.com/KirillOsenkov/UltraMcp) by Kirill Osenkov (MIT license, see [THIRD-PARTY-NOTICES.txt](../src/Ultra.Mcp/THIRD-PARTY-NOTICES.txt)).
+
+## Automation and AI agents
+
+`ultra guide` prints the guide for AI agents and scripts: how to capture, read the result and analyze a profile.
+
+- When its output is redirected, ultra prints plain lines (no live display): the steps, and the status every few seconds.
+- `--result-file result.json` writes a JSON summary when `profile` or `convert` ends, success or failure:
+
+  ```json
+  {
+    "version": 1,
+    "command": "profile",
+    "success": true,
+    "exitCode": 0,
+    "stopped": false,
+    "elevated": true,
+    "startTime": "2026-10-31T10:12:00+01:00",
+    "durationSeconds": 42.1,
+    "profiles": [ { "path": "C:\\work\\ultra_my_app_2026-10-31_10_12_00_pid_1234.json.gz", "size": 12345678 } ]
+  }
+  ```
+
+  On failure, `success` is `false` and `error` gives the reason. The exit code of ultra is 0 when the profile was written, 1 otherwise.
+- `--stop-file stop.txt` stops the profiling as soon as the file exists, like CTRL+C: the profile is still converted and written. This is how a script stops a capture running in the background.
+- `--elevate` (Windows) asks for the administrator rights with a UAC prompt, so that a non-elevated script or agent can profile.
+
+For example, from a script that runs the scenario to profile in between:
+
+```console
+$ ultra profile --elevate --duration 60 --result-file result.json --stop-file stop.txt --pid 1234   # in the background
+$ ... run the scenario ...
+$ echo > stop.txt                                                                                 # stop: the profile is written
+```

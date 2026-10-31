@@ -15,12 +15,12 @@ public enum UltraProfilerConsoleMode
     Silent,
 
     /// <summary>
-    /// Redirect the console output from the program started to the current console, but live progress using Spectre.Console is disabled.
+    /// Redirect the console output from the program started to the current console, but the live progress display is disabled.
     /// </summary>
     Raw,
 
     /// <summary>
-    /// Redirect the last lines of the console output from the program started to the live progress using Spectre.Console.
+    /// Redirect the last lines of the console output from the program started to the live progress display.
     /// </summary>
     Live,
 }

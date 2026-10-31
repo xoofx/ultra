@@ -10,7 +10,12 @@ Paths/commands below are relative to this repository root.
 ## Orientation
 
 - CLI/global tool: `src/Ultra/`
-  - Command-line parsing and user-facing `profile`/`convert` flows live mainly in `Program.cs`.
+  - Command-line parsing and user-facing `profile`/`convert`/`report`/`mcp`/`guide` flows live mainly in `Program.cs`.
+  - Console output goes through `UltraOutput` (XenoAtom.Terminal.UI inline live region on a terminal, plain lines when redirected, JSON lines for the elevated child): do not write progress with `Console` directly.
+  - `--elevate` (`UltraElevation.cs`): Windows UAC relaunch; the elevated child talks to the non-elevated parent through files in a temp channel directory (output, stop/abort, program launch). Keep both sides in sync.
+  - `UltraGuide.md` (`ultra guide`) is the guide for AI agents: keep it in sync with the CLI options and the MCP tools.
+- MCP server: `src/Ultra.Mcp/` (`ultra mcp`, stdio, ModelContextProtocol.Core). The analysis tools come from UltraMcp by Kirill Osenkov (MIT, keep the file headers and `THIRD-PARTY-NOTICES.txt`); the capture tools (`UltraJobs.cs`) run the ultra CLI as jobs with `--result-file`/`--stop-file`.
+- Automation contracts in `src/Ultra.Core/Automation/`: the `--result-file` JSON (`UltraCommandResult`) is read by external tools: only add properties.
 - Core library: `src/Ultra.Core/`
   - Profiling orchestration: `UltraProfiler*.cs`, `DiagnosticPortSession.cs`.
   - Event processing/conversion: `Parser/`, `UltraConverterToFirefox*.cs`, `FirefoxProfiler.cs`.

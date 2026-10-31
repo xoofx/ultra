@@ -55,5 +55,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
     <InternalsVisibleTo Include="Ultra.Tests" />
+    <InternalsVisibleTo Include="ultra" />
+    <InternalsVisibleTo Include="Ultra.Mcp" />
   </ItemGroup>
 </Project>

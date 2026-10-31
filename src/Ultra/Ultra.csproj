@@ -14,11 +14,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Description>Ultra is an advanced profiler for .NET Applications available on Windows, Linux and macOS.</Description>
+    <Description>Ultra is an advanced profiler for .NET Applications available on Windows, Linux and macOS, with an MCP server for AI agents.</Description>
     <Copyright>Alexandre Mutel</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Authors>Alexandre Mutel</Authors>
-    <PackageTags>profiler;etw</PackageTags>
+    <PackageTags>profiler;etw;mcp</PackageTags>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
     <PackageIcon>ultra.png</PackageIcon>
     <PackageProjectUrl>https://github.com/xoofx/ultra</PackageProjectUrl>
@@ -32,6 +32,13 @@
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../../img/ultra.png" Pack="true" PackagePath="/" />
     <None Include="$(MSBuildThisFileDirectory)../../readme.md" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../Ultra.Mcp/THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="UltraGuide.md">
+      <LogicalName>UltraGuide.md</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
@@ -39,12 +46,14 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Spectre.Console" />
     <PackageReference Include="XenoAtom.CommandLine" />
+    <PackageReference Include="XenoAtom.Terminal.UI" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Ultra.Core\Ultra.Core.csproj" />
+    <ProjectReference Include="..\Ultra.Mcp\Ultra.Mcp.csproj" />
+    <InternalsVisibleTo Include="Ultra.Tests" />
   </ItemGroup>
 
   <!-- the Linux launcher `ultra` beside ultra.exe in the normal build: the build folder copied to a Linux box runs as it is -->

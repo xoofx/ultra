@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
 
+using System.Diagnostics;
 using Microsoft.Diagnostics.Symbols;
 
 namespace Ultra.Core;
@@ -108,6 +109,14 @@ public class UltraProfilerOptions
     /// Gets or sets the action to log standard error output from the program.
     /// </summary>
     public Action<string>? ProgramLogStderr;
+
+    /// <summary>
+    /// Gets or sets an optional function that starts the program to profile (<see cref="ProgramPath"/> with <see cref="Arguments"/>)
+    /// in place of the profiler, for example from another process that is not elevated. The function returns the started process,
+    /// which must still be running. When set, <see cref="ConsoleMode"/>, <see cref="ProgramLogStdout"/> and <see cref="ProgramLogStderr"/>
+    /// are not used: the output of the program is the responsibility of the function.
+    /// </summary>
+    public Func<ProcessStartInfo, Task<Process>>? ProgramStarter { get; set; }
 
     /// <summary>
     /// Gets or sets the function to determine whether profiling should start.

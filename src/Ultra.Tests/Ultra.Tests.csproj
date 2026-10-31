@@ -17,6 +17,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Ultra.Core\Ultra.Core.csproj" />
     <ProjectReference Include="..\Ultra.Sampler\Ultra.Sampler.csproj" />
+    <ProjectReference Include="..\Ultra.Mcp\Ultra.Mcp.csproj" />
+    <ProjectReference Include="..\Ultra\Ultra.csproj" />
   </ItemGroup>
 
 </Project>

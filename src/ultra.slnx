@@ -17,6 +17,7 @@
   </Folder>
   <Project Path="Ultra.Core/Ultra.Core.csproj" />
   <Project Path="Ultra.Example/Ultra.Example.csproj" />
+  <Project Path="Ultra.Mcp/Ultra.Mcp.csproj" />
   <Project Path="Ultra.Sampler/Ultra.Sampler.csproj" />
   <Project Path="Ultra.Tests/Ultra.Tests.csproj" />
   <Project Path="Ultra/Ultra.csproj" />

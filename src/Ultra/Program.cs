@@ -1,39 +1,59 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using ByteSizeLib;
-using Spectre.Console;
 using Ultra.Core;
+using Ultra.Core.Automation;
 using Ultra.Core.Linux;
 using Ultra.Core.Report;
+using Ultra.Mcp;
 using XenoAtom.CommandLine;
+using XenoAtom.Terminal;
 
 namespace Ultra;
 
 /// <summary>
 /// Main entry point for the ultra command line.
 /// </summary>
-internal class Program
+internal static class Program
 {
+    private const string _ = "";
+
     static async Task<int> Main(string[] args)
     {
         Console.InputEncoding = Encoding.UTF8;
         Console.OutputEncoding = Encoding.UTF8;
 
+        return await RunAsync(args);
+    }
+
+    /// <summary>
+    /// Gets the version of ultra.
+    /// </summary>
+    public static string Version => typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+
+    /// <summary>
+    /// Runs the ultra command line (also used by the elevated ultra of `--elevate` for the command it is asked to run).
+    /// </summary>
+    private static async Task<int> RunAsync(string[] args)
+    {
         List<int> pidList = new();
 
         bool verbose = false;
+        bool elevate = false;
+        string? resultFile = null;
+        string? stopFile = null;
         int reportTop = 12, reportWorkers = 0;
         bool reportOffsets = false;
         string? reportThread = null;
         var options = new UltraProfilerOptions();
 
-        const string _ = "";
-
         var commandApp = new CommandApp("ultra", "Profile an application")
         {
-            new CommandUsage("Usage: {NAME} [Options] command "),
+            new CommandUsage("Usage: {NAME} [Options] command"),
             _,
             new HelpOption(),
             new VersionOption(),
@@ -74,258 +94,18 @@ internal class Program
                     }
                 },
                 { "<>", "Exec to launch with arguments passed" },
-                // Action for the commit command
-                async (ctx, arguments) =>
-                {
-                    // `--pmc list` (or help): the accepted counters, then exit
-                    if (options.HardwareCounters.Any(x => x.Equals("list", StringComparison.OrdinalIgnoreCase) || x.Equals("help", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        AnsiConsole.WriteLine(PerfEventSpec.ListText);
-                        return 0;
-                    }
-
-                    if (arguments.Length == 0 && pidList.Count == 0)
-                    {
-                        AnsiConsole.MarkupLine("[red]Missing pid or executable name[/]");
-                        return 1;
-                    }
-
-                    if (!UltraProfiler.IsElevated())
-                    {
-                        AnsiConsole.MarkupLine($"[darkorange]{UltraProfiler.ElevationRequirement}[/]");
-                        return 1;
-                    }
-
-                    if (options.HardwareCounters.Count > 0 && !OperatingSystem.IsLinux())
-                    {
-                        AnsiConsole.MarkupLine("[red]--pmc (hardware counters) is only supported on Linux[/]");
-                        return 1;
-                    }
-
-                    List<string> jsonGzOutputs = [];
-
-                    
-                    // Add the pid passed as options
-                    options.ProcessIds.AddRange(pidList);
-
-                    if (arguments.Length == 1 && arguments[0].Length > 0 && arguments[0].All(c => char.IsAsciiDigit(c) || c == ','))
-                    {
-                        var pids = new List<int>();
-                        AddPids(pids, arguments[0]);
-                        options.ProcessIds.AddRange(pids.Except(options.ProcessIds).ToList());
-                    }
-                    else if (arguments.Length > 0)
-                    {
-                        options.ProgramPath = arguments[0];
-                        options.Arguments.AddRange(arguments.AsSpan().Slice(1));
-                    }
-
-                    AnsiConsole.MarkupLine($"[green]You can press CTRL+C to stop profiling before the end of the process[/]");
-
-                    options.EnsureDirectoryForBaseOutputFileName();
-
-                    var etwProfiler = UltraProfiler.Create();
-
-                    Console.CancelKeyPress += (sender, eventArgs) =>
-                    {
-                        AnsiConsole.WriteLine();
-                        AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
-                        eventArgs.Cancel = true;
-                        // ReSharper disable once AccessToDisposedClosure
-                        if (etwProfiler.Cancel())
-                        {
-                            AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
-                        }
-                    };
-
-                    // Handle paused
-                    if (options.Paused)
-                    {
-                        Console.TreatControlCAsInput = true;
-
-                        options.ShouldStartProfiling = () =>
-                        {
-                            AnsiConsole.MarkupLine("[green]Press SPACE or ENTER to start profiling[/]");
-                            var key = Console.ReadKey(true);
-                            bool startProfiling = key.Key == ConsoleKey.Spacebar || key.Key == ConsoleKey.Enter;
-
-                            bool isCtrlC = key.Modifiers == ConsoleModifiers.Control && key.Key == ConsoleKey.C;
-                            if (startProfiling || isCtrlC)
-                            {
-                                // Restore the default behavior so that CancelKeyPress will be called later if CTRL+C is pressed
-                                Console.TreatControlCAsInput = false;
-                            }
-
-                            if (isCtrlC)
-                            {
-                                AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
-                                etwProfiler.Cancel();
-                            }
-                            else if (!startProfiling)
-                            {
-                                AnsiConsole.MarkupLine($"[darkorange]Key pressed {key.Modifiers} {key.Key}[/]");
-                            }
-                            
-                            return startProfiling;
-                        };
-                    }
-
-                    if (options.ConsoleMode == UltraProfilerConsoleMode.Silent)
-                    {
-                        await AnsiConsole.Status()
-                            .Spinner(Spinner.Known.Default)
-                            .SpinnerStyle(Style.Parse("red"))
-                            .StartAsync("Profiling", async statusCtx =>
-                                {
-                                    string? previousText = null;
-
-                                    options.LogStepProgress = (text) =>
-                                    {
-                                        if (verbose && previousText is not null && previousText != text)
-                                        {
-                                            AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                            previousText = text;
-                                        }
-
-                                        statusCtx.Status(Markup.Escape(text));
-                                    };
-                                    options.LogProgress = (text) =>
-                                    {
-                                        if (verbose && previousText != null && previousText != text)
-                                        {
-                                            AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                        }
-
-                                        statusCtx.Status(Markup.Escape(text));
-                                        previousText = text;
-                                    };
-                                    options.WaitingFileToComplete = (file) => { statusCtx.Status($"Waiting for {Markup.Escape(file)} to complete"); };
-                                    options.WaitingFileToCompleteTimeOut = (file) => { statusCtx.Status($"Timeout waiting for {Markup.Escape(file)} to complete"); };
-
-                                    try
-                                    {
-                                        jsonGzOutputs = await etwProfiler.Run(options);
-                                    }
-                                    finally
-                                    {
-                                        etwProfiler.Dispose();
-                                    }
-
-                                    if (verbose)
-                                    {
-                                        options.LogProgress.Invoke("Profiling Done");
-                                    }
-                                }
-                            );
-                    }
-                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Raw)
-                    {
-                        options.LogStepProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
-                        options.LogProgress = s => AnsiConsole.WriteLine($">>ultra::{s}");
-                        options.WaitingFileToComplete = (file) => { AnsiConsole.WriteLine($">>ultra::Waiting for {Markup.Escape(file)} to complete"); };
-                        options.WaitingFileToCompleteTimeOut = (file) => { AnsiConsole.WriteLine($">>ultra::Timeout waiting for {Markup.Escape(file)} to complete"); };
-                        options.ProgramLogStdout = AnsiConsole.WriteLine;
-                        options.ProgramLogStderr = AnsiConsole.WriteLine;
-                        
-                        try
-                        {
-                            jsonGzOutputs = await etwProfiler.Run(options);
-                        }
-                        finally
-                        {
-                            etwProfiler.Dispose();
-                        }
-                    }
-                    else if (options.ConsoleMode == UltraProfilerConsoleMode.Live)
-                    {
-                        var statusTable = new StatusTable();
-
-                        await AnsiConsole.Live(statusTable.Table)
-                            // .AutoClear(true) // No auto clear to keep the output (e.g. in case the program shows errors in its stdout/stderr)
-                            .StartAsync(async liveCtx =>
-                            {
-                                string? previousText = null;
-
-                                options.LogStepProgress = (text) =>
-                                {
-                                    if (verbose && previousText is not null && previousText != text)
-                                    {
-                                        statusTable.LogText($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                        previousText = text;
-                                    }
-
-                                    statusTable.Status(Markup.Escape(text));
-
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-
-                                options.LogProgress = (text) =>
-                                {
-                                    if (verbose && previousText != null && previousText != text)
-                                    {
-                                        statusTable.LogText($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                    }
-
-                                    statusTable.Status(Markup.Escape(text));
-                                    previousText = text;
-
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-
-                                options.WaitingFileToComplete = (file) =>
-                                {
-                                    statusTable.Status($"Waiting for {Markup.Escape(file)} to complete");
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-
-                                options.WaitingFileToCompleteTimeOut = (file) =>
-                                {
-                                    statusTable.Status($"Timeout waiting for {Markup.Escape(file)} to complete");
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-
-                                options.ProgramLogStdout = (text) =>
-                                {
-                                    statusTable.LogText(Markup.Escape(text));
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-
-                                options.ProgramLogStderr = (text) =>
-                                {
-                                    statusTable.LogText(Markup.Escape(text));
-                                    statusTable.UpdateTable();
-                                    liveCtx.Refresh();
-                                };
-                                
-                                try
-                                {
-                                    jsonGzOutputs = await etwProfiler.Run(options);
-                                }
-                                finally
-                                {
-                                    etwProfiler.Dispose();
-                                }
-                            }
-                        );
-                    }
-
-                    if (jsonGzOutputs.Count > 0)
-                    {
-                        PrintGeneratedFiles(jsonGzOutputs);
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[red]The profiler did not generate any trace file[/]");
-                        return 1;
-                    }
-
-                    return 0;
-                }
+                _,
+                "Automation (scripts, AI agents):",
+                { "elevate", "Windows only: when ultra does not run as administrator, ask for it with a UAC prompt and run the profiling in an elevated ultra. Its progress, the output of the program and its exit code are relayed to this console, CTRL+C still stops it. A program launched after -- still runs as the current user, not elevated.", v => elevate = v is not null },
+                { "result-file=", "Write a JSON summary to {FILE} when the command ends: success, exitCode, error, stopped and the profiles written (path, size). The way for a script or an agent to find the json.gz files.", v => resultFile = v },
+                { "stop-file=", "Stop profiling as soon as {FILE} exists (created by another process): the profile is still converted and written, like with CTRL+C. The file is deleted at start if it exists.", v => stopFile = v },
+                _,
+                "Examples:",
+                "  ultra profile --duration 10 -- my_app.exe arg0     Launch my_app.exe and profile its first 10 seconds",
+                "  ultra profile --pid 1234,5678                      Attach to running processes until they exit (or 120s)",
+                "  ultra profile --elevate --duration 30 --result-file result.json --pid 1234",
+                "                                                     From a non-admin shell or an agent (Windows)",
+                async (_, arguments) => await ProfileAsync(args, arguments, options, pidList, verbose, elevate, resultFile, stopFile)
             },
             new Command("convert", "Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .nettrace files, or a list of nettrace files) to a Firefox Profiler json file")
             {
@@ -336,118 +116,9 @@ internal class Program
                 { "pid=", "The {PID} of the process. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
                 { "nofilter", "ETL only: convert the full ETL file. By default only the CPU samples, stacks and context switches of the --pid process(es) are converted, which is much faster on a busy machine; that filtered .etlx file is kept next to the ETL file and reused.", v => options.FastFilter = v is null },
+                { "result-file=", "Write a JSON summary to {FILE} when the command ends (see `ultra profile --help`).", v => resultFile = v },
                 { "<>", "The trace file(s) to convert" },
-                async (ctx, arguments) =>
-                {
-                    var maxWidth = Console.IsOutputRedirected ? 80 : Console.WindowWidth;
-
-                    if (arguments.Length == 0)
-                    {
-                        AnsiConsole.MarkupLine("[red]Missing trace file name[/]");
-                        return 1;
-                    }
-
-                    if (pidList.Count == 0)
-                    {
-                        AnsiConsole.MarkupLine("[red]Missing --pid option[/]");
-                        return 1;
-                    }
-
-                    
-
-                    List<string> fileOutputs = [];
-
-                    await AnsiConsole.Status()
-                        .Spinner(Spinner.Known.Default)
-                        .SpinnerStyle(Style.Parse("red"))
-                        .StartAsync("Converting", async statusCtx =>
-                            {
-                                string? previousText = null;
-
-                                options.LogStepProgress = (text) =>
-                                {
-                                    if (verbose && previousText is not null && previousText != text)
-                                    {
-                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                        previousText = text;
-                                    }
-
-                                    statusCtx.Status(Markup.Escape(text));
-                                };
-
-                                options.LogProgress = (text) =>
-                                {
-                                    if (verbose && previousText != null && previousText != text)
-                                    {
-                                        AnsiConsole.MarkupLine($"{Markup.Escape(previousText)} [green]\u2713[/]");
-                                    }
-
-                                    statusCtx.Status(Markup.Escape(text));
-                                    previousText = text;
-                                };
-
-                                var etwProfiler = UltraProfiler.Create();
-                                try
-                                {
-                                    Console.CancelKeyPress += (sender, eventArgs) =>
-                                    {
-                                        AnsiConsole.WriteLine();
-                                        AnsiConsole.MarkupLine("[darkorange]Cancelled via CTRL+C[/]");
-
-                                        eventArgs.Cancel = true;
-                                        if (etwProfiler.Cancel())
-                                        {
-                                            AnsiConsole.MarkupLine("[red]Stopped via CTRL+C[/]");
-                                        }
-                                    };
-
-                                    options.EnsureDirectoryForBaseOutputFileName();
-
-                                    var traceFiles = arguments.Select(x => new UltraProfilerTraceFile(x)).ToList();
-
-                                    // Try to recover the base name from the first trace file
-                                    string baseName = Path.GetFileNameWithoutExtension(traceFiles[0].FileName);
-                                    // The unmerged ETL files of a profile (x.kernel.etl, x.user.etl, x.rundown.etl)
-                                    foreach (var postfix in (ReadOnlySpan<string>)[".kernel", ".user", ".rundown"])
-                                    {
-                                        if (baseName.EndsWith(postfix, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            baseName = baseName.Substring(0, baseName.Length - postfix.Length);
-                                            break;
-                                        }
-                                    }
-
-                                    if (traceFiles[0].IsNettrace)
-                                    {
-                                        if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler))
-                                        {
-                                            baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameSampler.Length);
-                                        }
-                                        else if (baseName.EndsWith(UltraProfiler.NettracePostfixNameClr))
-                                        {
-                                            baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameClr.Length);
-                                        }
-                                    }
-                                    
-                                    fileOutputs = await etwProfiler.Convert(baseName, traceFiles, pidList, options);
-                                }
-                                finally
-                                {
-                                    etwProfiler.Dispose();
-                                }
-
-                                if (verbose)
-                                {
-                                    options.LogProgress.Invoke("Converting Done");
-                                }
-                            }
-                        );
-
-
-                    PrintGeneratedFiles(fileOutputs);
-
-                    return 0;
-                }
+                async (_, arguments) => await ConvertAsync(arguments, options, pidList, verbose, resultFile)
             },
             new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function. Streams the file: fine for a trace of hundreds of MB.")
             {
@@ -459,21 +130,21 @@ internal class Program
                 { "thread=", "Only the threads whose name contains {TEXT}.", v => reportThread = v },
                 { "workers=", "The parsing threads. Default is half the processors.", (int v) => reportWorkers = v },
                 { "<>", "The profile json.gz (or json) file" },
-                (ctx, arguments) =>
+                (_, arguments) =>
                 {
                     if (arguments.Length != 1)
                     {
-                        AnsiConsole.MarkupLine("[red]Expecting one profile file[/]");
+                        Terminal.WriteMarkupLine("[red]Expecting one profile file[/]");
                         return ValueTask.FromResult(1);
                     }
 
                     if (!File.Exists(arguments[0]))
                     {
-                        AnsiConsole.MarkupLine($"[red]File not found: {Markup.Escape(arguments[0])}[/]");
+                        Terminal.WriteMarkupLine($"[red]File not found: {arguments[0]}[/]");
                         return ValueTask.FromResult(1);
                     }
 
-                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    var clock = Stopwatch.StartNew();
                     new UltraProfileReport(reportTop, reportOffsets, reportThread, reportWorkers).Run(arguments[0], Console.Out);
                     if (verbose)
                     {
@@ -481,29 +152,397 @@ internal class Program
                     }
                     return ValueTask.FromResult(0);
                 }
-            }
+            },
+            new Command("mcp", "Run the ultra MCP server (Model Context Protocol, stdio): AI agents capture profiles and analyze them with its tools")
+            {
+                new CommandUsage("Usage: {NAME}"),
+                _,
+                new HelpOption(),
+                _,
+                "The server talks JSON-RPC on stdin/stdout: configure your MCP client with a stdio server whose command is",
+                "`ultra` with the argument `mcp` (e.g. with Claude Code: claude mcp add ultra -- ultra mcp).",
+                _,
+                "Tools: find_processes, start_profiling, start_conversion, get_job_status, stop_job, list_jobs (capture);",
+                "get_profile_report, load_profile, list_threads, call_tree, call_tree_inverted, find_hotspots, focus_function,",
+                "module_breakdown, top_functions, list_samples, get_sample, get_call_stack, query_markers, list_counters,",
+                "counter_samples, get_llm_guide (analysis). On Windows, start_profiling shows a UAC prompt when the server",
+                "is not elevated. See `ultra guide` for the workflow.",
+                async (_, _) =>
+                {
+                    await UltraMcpServer.RunAsync(UltraSelfCommand.ForCurrentProcess(), Version, CancellationToken.None);
+                    return 0;
+                }
+            },
+            new Command("guide", "Print the guide for AI agents and automation: capture a profile, read the result, analyze it (report, MCP tools)")
+            {
+                new CommandUsage("Usage: {NAME}"),
+                _,
+                new HelpOption(),
+                (_, _) =>
+                {
+                    Console.Out.Write(UltraGuide.Text);
+                    return ValueTask.FromResult(0);
+                }
+            },
+            CreateElevatedRunCommand(),
+            _,
+            "Automation and AI agents:",
+            "  ultra guide                       The workflow for agents and scripts: capture, results, analysis, MCP",
+            "  ultra profile --elevate --duration 30 --result-file result.json --pid 1234",
+            "                                    Capture from a non-admin shell (Windows UAC prompt), JSON summary",
+            "  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions",
+            "  ultra mcp                         MCP server (stdio) to capture and analyze profiles from an agent",
         };
 
-        var width = Console.IsOutputRedirected ? 80 : Math.Max(80, Console.WindowWidth);
+        var width = Console.IsOutputRedirected ? 120 : Math.Max(80, Console.WindowWidth);
         var optionWidth = Console.IsOutputRedirected || width == 80 ? 29 : 36;
-        
+
         try
         {
             return await commandApp.RunAsync(args, new CommandRunConfig(width, optionWidth));
         }
         catch (Exception ex)
         {
-            AnsiConsole.Foreground = Color.Red;
-            AnsiConsole.WriteLine($"Unexpected error: {ex.Message}");
-            AnsiConsole.ResetColors();
+            Terminal.WriteMarkupLine($"[red]Unexpected error: {ex.Message}[/]");
             if (verbose)
             {
-                AnsiConsole.WriteLine(ex.ToString());
+                Terminal.WriteLine(ex.ToString());
             }
             return 1;
         }
     }
-    
+
+    /// <summary>
+    /// The hidden command run by the elevated ultra of `--elevate` (see <see cref="UltraElevation"/>).
+    /// </summary>
+    private static Command CreateElevatedRunCommand()
+    {
+        var command = new Command(UltraElevation.ChildCommandName, "Run a command elevated, started by --elevate") { Hidden = true };
+        command.Add("<>", "The channel directory");
+        command.Action = async (_, arguments) => arguments.Length == 1 ? await UltraElevation.RunChildAsync(arguments[0], RunAsync) : 1;
+        return command;
+    }
+
+    private static async Task<int> ProfileAsync(string[] allArguments, string[] arguments, UltraProfilerOptions options, List<int> pidList, bool verbose, bool elevate, string? resultFile, string? stopFile)
+    {
+        // `--pmc list` (or help): the accepted counters, then exit
+        if (options.HardwareCounters.Any(x => x.Equals("list", StringComparison.OrdinalIgnoreCase) || x.Equals("help", StringComparison.OrdinalIgnoreCase)))
+        {
+            Terminal.WriteLine(PerfEventSpec.ListText);
+            return 0;
+        }
+
+        var child = UltraElevation.Child;
+        var output = child?.Output ?? UltraOutput.Create(options.ConsoleMode, verbose, interactive: !options.Paused);
+        var result = new UltraCommandResult { Command = "profile", StartTime = DateTimeOffset.Now };
+        var clock = Stopwatch.StartNew();
+        bool writeResult = resultFile is not null;
+        try
+        {
+            if (arguments.Length == 0 && pidList.Count == 0)
+            {
+                return Fail(result, output, "Missing pid or executable name");
+            }
+
+            if (options.HardwareCounters.Count > 0 && !OperatingSystem.IsLinux())
+            {
+                return Fail(result, output, "--pmc (hardware counters) is only supported on Linux");
+            }
+
+            if (!UltraProfiler.IsElevated())
+            {
+                if (elevate && OperatingSystem.IsWindows() && child is null)
+                {
+                    if (options.Paused)
+                    {
+                        return Fail(result, output, "--paused cannot be used with --elevate: use --delay instead");
+                    }
+
+                    // The elevated ultra runs the command and writes the result file
+                    writeResult = false;
+                    try
+                    {
+                        return await UltraElevation.RunElevatedAsync(allArguments, output, options.ConsoleMode);
+                    }
+                    catch (UltraElevationException ex)
+                    {
+                        writeResult = resultFile is not null;
+                        return Fail(result, output, ex.Message);
+                    }
+                }
+
+                return Fail(result, output, OperatingSystem.IsWindows()
+                    ? $"{UltraProfiler.ElevationRequirement}: run from an elevated prompt, or add --elevate to ask for it with a UAC prompt"
+                    : UltraProfiler.ElevationRequirement);
+            }
+
+            // Add the pid passed as options
+            options.ProcessIds.AddRange(pidList);
+
+            if (arguments.Length == 1 && arguments[0].Length > 0 && arguments[0].All(c => char.IsAsciiDigit(c) || c == ','))
+            {
+                var pids = new List<int>();
+                AddPids(pids, arguments[0]);
+                options.ProcessIds.AddRange(pids.Except(options.ProcessIds).ToList());
+            }
+            else if (arguments.Length > 0)
+            {
+                options.ProgramPath = arguments[0];
+                options.Arguments.AddRange(arguments.AsSpan().Slice(1));
+            }
+
+            if (child is not null)
+            {
+                // The program runs as the user, started by the ultra that is not elevated
+                options.ProgramStarter = child.StartProgramAsync;
+            }
+
+            output.Info(stopFile is null ? "You can press CTRL+C to stop profiling before the end of the process" : $"Profiling stops at the end of the process, after {options.DurationInSeconds}s, or when {stopFile} exists");
+
+            options.EnsureDirectoryForBaseOutputFileName();
+
+            var profiler = UltraProfiler.Create();
+
+            ConsoleCancelEventHandler onCancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                result.Stopped = true;
+                output.Warning("Cancelled via CTRL+C");
+                // ReSharper disable once AccessToDisposedClosure
+                if (profiler.Cancel())
+                {
+                    output.Error("Stopped via CTRL+C");
+                }
+            };
+            Console.CancelKeyPress += onCancel;
+
+            using var stopMonitor = UltraStopMonitor.Start(stopFile, child,
+                reason =>
+                {
+                    result.Stopped = true;
+                    if (reason.Length > 0)
+                    {
+                        output.Warning(reason);
+                    }
+
+                    profiler.Cancel();
+                },
+                () =>
+                {
+                    output.Error("Profiling aborted");
+                    // A second cancel waits for the profiler to stop: not on the timer thread
+                    ThreadPool.QueueUserWorkItem(_ => profiler.Cancel());
+                });
+
+            // Handle paused
+            if (options.Paused)
+            {
+                options.ShouldStartProfiling = () => ShouldStartProfiling(output, profiler);
+            }
+
+            output.Attach(options);
+
+            List<string> jsonGzOutputs = [];
+            try
+            {
+                await output.RunAsync("Profiling", async () =>
+                {
+                    try
+                    {
+                        jsonGzOutputs = await profiler.Run(options);
+                    }
+                    finally
+                    {
+                        profiler.Dispose();
+                    }
+
+                    if (verbose)
+                    {
+                        options.LogProgress?.Invoke("Profiling Done");
+                    }
+                });
+            }
+            finally
+            {
+                Console.CancelKeyPress -= onCancel;
+            }
+
+            if (jsonGzOutputs.Count == 0)
+            {
+                return Fail(result, output, "The profiler did not generate any trace file");
+            }
+
+            PrintGeneratedFiles(output, jsonGzOutputs, result);
+            result.Success = true;
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return Fail(result, output, ex is InvalidOperationException { Message: "CTRL+C requested" } ? "Profiling aborted" : ex.Message, ex, verbose);
+        }
+        finally
+        {
+            if (writeResult)
+            {
+                WriteResult(result, resultFile!, clock);
+            }
+        }
+    }
+
+    private static bool ShouldStartProfiling(UltraOutput output, UltraProfiler profiler)
+    {
+        Console.TreatControlCAsInput = true;
+        output.Info("Press SPACE or ENTER to start profiling");
+        var key = Console.ReadKey(true);
+        bool startProfiling = key.Key == ConsoleKey.Spacebar || key.Key == ConsoleKey.Enter;
+
+        bool isCtrlC = key.Modifiers == ConsoleModifiers.Control && key.Key == ConsoleKey.C;
+        if (startProfiling || isCtrlC)
+        {
+            // Restore the default behavior so that CancelKeyPress will be called later if CTRL+C is pressed
+            Console.TreatControlCAsInput = false;
+        }
+
+        if (isCtrlC)
+        {
+            output.Warning("Cancelled via CTRL+C");
+            profiler.Cancel();
+        }
+        else if (!startProfiling)
+        {
+            output.Warning($"Key pressed {key.Modifiers} {key.Key}");
+        }
+
+        return startProfiling;
+    }
+
+    private static async Task<int> ConvertAsync(string[] arguments, UltraProfilerOptions options, List<int> pidList, bool verbose, string? resultFile)
+    {
+        var output = UltraElevation.Child?.Output ?? UltraOutput.Create(UltraProfilerConsoleMode.Silent, verbose);
+        var result = new UltraCommandResult { Command = "convert", StartTime = DateTimeOffset.Now };
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            if (arguments.Length == 0)
+            {
+                return Fail(result, output, "Missing trace file name");
+            }
+
+            if (pidList.Count == 0)
+            {
+                return Fail(result, output, "Missing --pid option");
+            }
+
+            output.Attach(options);
+            options.EnsureDirectoryForBaseOutputFileName();
+
+            List<string> fileOutputs = [];
+            var profiler = UltraProfiler.Create();
+            ConsoleCancelEventHandler onCancel = (_, eventArgs) =>
+            {
+                output.Warning("Cancelled via CTRL+C");
+                eventArgs.Cancel = true;
+                // ReSharper disable once AccessToDisposedClosure
+                if (profiler.Cancel())
+                {
+                    output.Error("Stopped via CTRL+C");
+                }
+            };
+            Console.CancelKeyPress += onCancel;
+            try
+            {
+                await output.RunAsync("Converting", async () =>
+                {
+                    try
+                    {
+                        var traceFiles = arguments.Select(x => new UltraProfilerTraceFile(x)).ToList();
+                        fileOutputs = await profiler.Convert(GetConvertBaseName(traceFiles[0]), traceFiles, pidList, options);
+                    }
+                    finally
+                    {
+                        profiler.Dispose();
+                    }
+
+                    if (verbose)
+                    {
+                        options.LogProgress?.Invoke("Converting Done");
+                    }
+                });
+            }
+            finally
+            {
+                Console.CancelKeyPress -= onCancel;
+            }
+
+            PrintGeneratedFiles(output, fileOutputs, result);
+            result.Success = fileOutputs.Count > 0;
+            return result.Success ? 0 : Fail(result, output, "The conversion did not generate any file");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return Fail(result, output, ex.Message, ex, verbose);
+        }
+        finally
+        {
+            if (resultFile is not null)
+            {
+                WriteResult(result, resultFile, clock);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recovers the base name of the profile from the first trace file.
+    /// </summary>
+    private static string GetConvertBaseName(UltraProfilerTraceFile traceFile)
+    {
+        string baseName = Path.GetFileNameWithoutExtension(traceFile.FileName);
+        // The unmerged ETL files of a profile (x.kernel.etl, x.user.etl, x.rundown.etl)
+        foreach (var postfix in (ReadOnlySpan<string>)[".kernel", ".user", ".rundown"])
+        {
+            if (baseName.EndsWith(postfix, StringComparison.OrdinalIgnoreCase))
+            {
+                baseName = baseName.Substring(0, baseName.Length - postfix.Length);
+                break;
+            }
+        }
+
+        if (traceFile.IsNettrace)
+        {
+            if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler))
+            {
+                baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameSampler.Length);
+            }
+            else if (baseName.EndsWith(UltraProfiler.NettracePostfixNameClr))
+            {
+                baseName = baseName.Substring(0, baseName.Length - UltraProfiler.NettracePostfixNameClr.Length);
+            }
+        }
+
+        return baseName;
+    }
+
+    private static int Fail(UltraCommandResult result, UltraOutput output, string message, Exception? exception = null, bool verbose = false)
+    {
+        result.Success = false;
+        result.Error = message;
+        output.Error(exception is null ? message : $"Unexpected error: {message}");
+        if (exception is not null && verbose)
+        {
+            output.Text(exception.ToString());
+        }
+
+        return 1;
+    }
+
+    private static void WriteResult(UltraCommandResult result, string resultFile, Stopwatch clock)
+    {
+        result.ExitCode = result.Success ? 0 : 1;
+        result.Elevated = UltraProfiler.IsElevated();
+        result.DurationSeconds = Math.Round(clock.Elapsed.TotalSeconds, 3);
+        result.WriteTo(resultFile);
+    }
+
     /// <summary>
     /// Adds the pids of a --pid option value: one pid or several separated by commas.
     /// </summary>
@@ -523,73 +562,19 @@ internal class Program
         }
     }
 
-    private static void PrintGeneratedFiles(List<string> files)
+    private static void PrintGeneratedFiles(UltraOutput output, List<string> files, UltraCommandResult result)
     {
         foreach (var file in files)
         {
-            AnsiConsole.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{Markup.Escape(file)}[/] - {ByteSize.FromBytes(new FileInfo(file).Length)}");
+            var fullPath = Path.GetFullPath(file);
+            var size = new FileInfo(fullPath).Length;
+            result.Profiles.Add(new UltraCommandResultFile { Path = fullPath, Size = size });
+            output.MarkupLine($"Generated Firefox Profiler JSON file -> [green]{UltraOutput.Escape(file)}[/] - {ByteSize.FromBytes(size)}");
         }
 
         if (files.Count > 0)
         {
-            AnsiConsole.MarkupLine($"Go to [blue]https://profiler.firefox.com/ [/]");
-        }
-    }
-
-    private class StatusTable
-    {
-        private string? _statusText;
-        private readonly Queue<string> _logLines = new();
-        private const int MaxLogLines = 10;
-        private int _spinnerStep;
-        private readonly Style _spinnerStyle;
-
-        public StatusTable()
-        {
-            Table = new Table();
-            Table.AddColumn(new TableColumn("Status"));
-            _spinnerStyle = Style.Parse("red");
-        }
-
-        public Table Table { get; }
-        
-        public void LogText(string text)
-        {
-            if (_logLines.Count > MaxLogLines)
-            {
-                _logLines.Dequeue();
-            }
-
-            _logLines.Enqueue(text);
-        }
-        
-        public void Status(string text)
-        {
-            _statusText = text;
-        }
-
-        public void UpdateTable()
-        {
-            Table.Rows.Clear();
-
-            if (_logLines.Count > 0)
-            {
-                var rows = new Rows(_logLines.Select(x => new Markup(x)));
-                Table.AddRow(rows);
-            }
-
-            if (_statusText != null)
-            {
-                var tableColumn = Table.Columns[0];
-
-                var spinnerStep = _spinnerStep;
-                var spinnerText = Spinner.Known.Default.Frames[spinnerStep];
-                _spinnerStep = (_spinnerStep + 1) % Spinner.Known.Default.Frames.Count;
-
-                tableColumn.Header = new Markup($"[red]{spinnerText}[/] Status");
-                tableColumn.Footer = new Markup(_statusText);
-                Table.ShowFooters = true;
-            }
+            output.MarkupLine("Go to [blue]https://profiler.firefox.com/[/] to open it, or analyze it with `ultra report` or `ultra mcp`");
         }
     }
 }
