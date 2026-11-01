@@ -83,7 +83,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 _userSession = new TraceEventSession($"{baseName}-user", userFileName);
                 // TraceEvent enables the PMC profile keyword only on the classic "NT Kernel Logger" session (one per machine:
-                // it fails if another tool holds it), so the kernel session takes that name only with hardware counters
+                // starting it stops the one of another tool), so the kernel session takes that name only with hardware counters
                 _kernelSession = new TraceEventSession(hardwareCounters.Count > 0 ? KernelTraceEventParser.KernelSessionName : $"{baseName}-kernel", kernelFileName);
 
                 return Task.CompletedTask;
@@ -243,6 +243,12 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 if (hardwareCounters.Count > 0)
                 {
+                    // TraceEvent stops and restarts a session of the same name: say so when another tool (WPR, PerfView, xperf) holds it
+                    if (TraceEventSession.GetActiveSessionNames().Contains(KernelTraceEventParser.KernelSessionName))
+                    {
+                        (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Warning: the {KernelTraceEventParser.KernelSessionName} session is already running (WPR, PerfView, xperf...): it is stopped to sample the hardware counters");
+                    }
+
                     // The selection of the sources is system wide and must be set before the kernel session starts.
                     // The kernel logs a PerfInfo CollectionStart event per source with its interval, which the converter reads.
                     try

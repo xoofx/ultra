@@ -127,6 +127,9 @@ public sealed record UltraEtwHardwareCounter(string Name, int SourceId, int Inte
     /// <summary>
     /// Parses a list of counters, rejecting a source given twice.
     /// </summary>
+    /// <param name="texts">The counter texts, see <see cref="Parse"/>.</param>
+    /// <param name="sources">The profile sources of the machine, see <see cref="GetSources"/>.</param>
+    /// <exception cref="ArgumentException">A counter is invalid (see <see cref="Parse"/>) or a source is given twice.</exception>
     public static List<UltraEtwHardwareCounter> ParseAll(IEnumerable<string> texts, IReadOnlyList<UltraEtwProfileSource> sources)
     {
         var counters = new List<UltraEtwHardwareCounter>();
