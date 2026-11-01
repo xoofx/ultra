@@ -42,6 +42,7 @@ public class UltraProfileReportTests
         profile.Meta.Abi = "linux-x64";
         profile.Meta.LogicalCPUs = 4;
         profile.Meta.ProfilingEndTime = 2000;
+        profile.Meta.Interval = 0.5;
         profile.Meta.Categories = [new FirefoxProfiler.Category { Name = "Other", Color = FirefoxProfiler.ProfileColor.Grey, Subcategories = { "Other" } }];
 
         // thread A: 3 samples of Inner (offsets 0, 0, 8) under Outer, 1 ms CPU each; thread B: 1 sample of Outer
@@ -55,7 +56,7 @@ public class UltraProfileReportTests
         new UltraProfileReport(top: 5, codeOffsets: true, workers: 2).Run(new MemoryStream(json), output);
         var text = output.ToString();
 
-        StringAssert.Contains(text, "product=Test abi=linux-x64 cpus=4 duration=2.0 s");
+        StringAssert.Contains(text, "product=Test abi=linux-x64 cpus=4 duration=2.0 s sampling=2000/s");
         StringAssert.Contains(text, "3 threads in the file: 2 CPU threads and 1 counter tracks (cache-misses: 1)");
         StringAssert.Contains(text, "CPU: 0.0 s over 2.0 s = 0.00 cores busy on average, 4 samples");
         StringAssert.Contains(text, "0 - worker (10)                                      3          3 ms  75.0%");

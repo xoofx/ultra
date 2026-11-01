@@ -75,6 +75,7 @@ internal abstract class UltraOutput
     {
         options.LogStepProgress = Status;
         options.LogProgress = Step;
+        options.LogWarning = Warning;
         options.WaitingFileToComplete = file => Status($"Waiting for {file} to complete");
         options.WaitingFileToCompleteTimeOut = file => Status($"Timeout waiting for {file} to complete");
         options.ProgramLogStdout = line => ProgramOutput(line, false);

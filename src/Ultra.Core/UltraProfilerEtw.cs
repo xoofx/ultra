@@ -47,6 +47,11 @@ internal sealed class UltraProfilerEtw : UltraProfiler
             StacksEnabled = true,
         };
 
+        // Hardware counters (--pmc): parsed before anything starts so that a wrong name fails at once
+        var hardwareCounters = ultraProfilerOptions.HardwareCounters.Count > 0
+            ? UltraEtwHardwareCounter.ParseAll(ultraProfilerOptions.HardwareCounters, UltraEtwHardwareCounter.GetSources())
+            : [];
+
         var kernelFileName = $"{baseName}.kernel.etl";
         var userFileName = $"{baseName}.user.etl";
 
@@ -77,7 +82,9 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                 }
 
                 _userSession = new TraceEventSession($"{baseName}-user", userFileName);
-                _kernelSession = new TraceEventSession($"{baseName}-kernel", kernelFileName);
+                // TraceEvent enables the PMC profile keyword only on the classic "NT Kernel Logger" session (one per machine:
+                // it fails if another tool holds it), so the kernel session takes that name only with hardware counters
+                _kernelSession = new TraceEventSession(hardwareCounters.Count > 0 ? KernelTraceEventParser.KernelSessionName : $"{baseName}-kernel", kernelFileName);
 
                 return Task.CompletedTask;
             },
@@ -232,7 +239,27 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                                    | KernelTraceEventParser.Keywords.ImageLoad
                                    | KernelTraceEventParser.Keywords.Process
                                    | KernelTraceEventParser.Keywords.Thread;
-                _kernelSession.EnableKernelProvider(kernelEvents, KernelTraceEventParser.Keywords.Profile);
+                var kernelStacks = KernelTraceEventParser.Keywords.Profile;
+
+                if (hardwareCounters.Count > 0)
+                {
+                    // The selection of the sources is system wide and must be set before the kernel session starts.
+                    // The kernel logs a PerfInfo CollectionStart event per source with its interval, which the converter reads.
+                    try
+                    {
+                        TraceEventProfileSources.Set(hardwareCounters.Select(x => x.SourceId).ToArray(), hardwareCounters.Select(x => x.Interval).ToArray());
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException($"Cannot select the hardware counters {string.Join(", ", hardwareCounters.Select(x => x.Name))} (too many at once, or the counters are in use by another tool): {ex.Message}", ex);
+                    }
+
+                    kernelEvents |= KernelTraceEventParser.Keywords.PMCProfile;
+                    kernelStacks |= KernelTraceEventParser.Keywords.PMCProfile;
+                    (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Hardware counters: {string.Join(", ", hardwareCounters.Select(x => $"{x.Name} every {x.Interval:N0} events"))}");
+                }
+
+                _kernelSession.EnableKernelProvider(kernelEvents, kernelStacks);
 
                 var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
                                 ClrTraceEventParser.Keywords.Exception |

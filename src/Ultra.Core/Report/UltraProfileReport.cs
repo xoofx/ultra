@@ -115,7 +115,7 @@ public sealed partial class UltraProfileReport
         // The report is read by tools and agents (`ultra report`, MCP): the same numbers whatever the culture of the machine
         void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
 
-        Line($"product={meta.Product} abi={meta.Abi} cpus={meta.Cpus} duration={meta.DurationMs / 1000:F1} s");
+        Line($"product={meta.Product} abi={meta.Abi} cpus={meta.Cpus} duration={meta.DurationMs / 1000:F1} s{(meta.IntervalMs > 0 ? $" sampling={1000 / meta.IntervalMs:F0}/s" : "")}");
         o.WriteLine();
         var counterTracks = string.Join(", ", counters.OrderBy(x => x.Key).Select(x => FormattableString.Invariant($"{x.Key}: {x.Value.Tracks}")));
         Line($"{threads} threads in the file: {cpuThreads.Count} CPU threads and {counters.Values.Sum(x => x.Tracks)} counter tracks{(counters.Count > 0 ? $" ({counterTracks})" : "")}");
@@ -183,7 +183,7 @@ public sealed partial class UltraProfileReport
 
     private sealed class ProfileMeta
     {
-        public double DurationMs;
+        public double DurationMs, IntervalMs;
         public string Product = "", Abi = "";
         public int? Cpus;
 
@@ -193,6 +193,7 @@ public sealed partial class UltraProfileReport
             {
                 var root = meta.RootElement;
                 DurationMs = root.TryGetProperty("profilingEndTime", out var e) && e.ValueKind == JsonValueKind.Number ? e.GetDouble() : 0;
+                IntervalMs = root.TryGetProperty("interval", out var i) && i.ValueKind == JsonValueKind.Number ? i.GetDouble() : 0;
                 Product = root.TryGetProperty("product", out var p) ? p.GetString() ?? "" : "";
                 Abi = root.TryGetProperty("abi", out var a) ? a.GetString() ?? "" : "";
                 Cpus = root.TryGetProperty("logicalCPUs", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : null;
