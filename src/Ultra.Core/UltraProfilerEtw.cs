@@ -243,10 +243,15 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 if (hardwareCounters.Count > 0)
                 {
-                    // TraceEvent stops and restarts a session of the same name: say so when another tool (WPR, PerfView, xperf) holds it
-                    if (TraceEventSession.GetActiveSessionNames().Contains(KernelTraceEventParser.KernelSessionName))
+                    // Another tool (WPR, PerfView, xperf) may hold the NT Kernel Logger. TraceEvent would restart it in place, which
+                    // keeps garbled kernel flags (no CPU samples, context switches or thread rundown): stop it first so ours starts afresh
+                    using (var runningKernelSession = TraceEventSession.GetActiveSession(KernelTraceEventParser.KernelSessionName))
                     {
-                        (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Warning: the {KernelTraceEventParser.KernelSessionName} session is already running (WPR, PerfView, xperf...): it is stopped to sample the hardware counters");
+                        if (runningKernelSession is not null)
+                        {
+                            (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Warning: the {KernelTraceEventParser.KernelSessionName} session is already running (WPR, PerfView, xperf...): it is stopped to sample the hardware counters");
+                            runningKernelSession.Stop();
+                        }
                     }
 
                     // The selection of the sources is system wide and must be set before the kernel session starts.
