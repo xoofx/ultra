@@ -92,6 +92,22 @@ The recording is written to `ultra_<name>_<time>.ultraperf` (perf events) plus o
 $ ultra convert --pid 12594 ultra_my_command_2026-10-30_15_23_46.ultraperf
 ```
 
+## Hardware counters on Windows
+
+`--pmc` works on Windows too, through the ETW profile sources of the machine (the counters `wpr -pmcsources` lists). The tracks are the same as on Linux: a `[name]` track under every thread, its samples weighted by the counter events they stand for.
+
+```console
+> ultra profile --pmc list
+> ultra profile --pmc InstructionRetired,TotalCycles,DcacheAccesses,BranchMispredictions --pid 12594
+> ultra profile --pmc cycles,branch-misses:8192 -- my_command.exe
+```
+
+- The names are the sources of the machine (`TotalCycles`, `InstructionRetired`, `DcacheAccesses`, `DcacheMisses`, `CacheMisses`, `BranchMispredictions`, `ICMiss`...), in any case; the Linux names `cycles`, `instructions`, `branches`, `branch-misses`, `cache-misses`, `L1-dcache-load-misses`, `L1-dcache-loads` and `L1-icache-load-misses` are accepted too.
+- `NAME:INTERVAL` takes a sample every INTERVAL counter events. The default is 65,536 for the miss counters and 1,000,000 for the counters that count at about the clock rate (cycles, instructions, accesses), about 5,000 samples per second per busy core at 5 GHz. There is no adaptive frequency on Windows, `--pmc-frequency` is Linux only.
+- The CPU counts a few sources at once (4 to 6); with more, the profiling fails at once with the reason.
+- Some listed sources never count on some machines (e.g. `DcacheMisses` and `CacheMisses` on a Zen 5 under Hyper-V): ultra warns when a counter gave no samples. L2, L3 and TLB counters have no source on Windows.
+- The hardware counters need the classic `NT Kernel Logger` session, of which there is one per machine: if another tool (WPR, PerfView, xperf) holds it, ultra warns and stops that session.
+
 ## Ultra Profiler UI
 
 In order to visualize a trace produced by `ultra.exe` you need to go to https://profiler.firefox.com/ and open the generated `json.gz` trace file.
@@ -211,15 +227,12 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --symbol-path=VALUE    The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\Local\Temp\
                                SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\alexa\AppData\Local\
                                Temp\SymbolCache*https://symbols.nuget.org/download/symbols`.
-      --pmc=NAME             Linux only: hardware counters to sample besides the CPU time, comma separated NAME[:PERIOD]
-                                (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per
-                               thread, weighted by the counts. Names, generic: cycles, cpu-cycles, instructions, cache-
-                               references, cache-misses, branches, branch-instructions, branch-misses, bus-cycles,
-                               stalled-cycles-frontend, stalled-cycles-backend, ref-cycles; cache: <cache>-<op> with
-                               cache = L1-dcache, L1-icache, LLC, dTLB, iTLB, branch, node and op = loads, load-misses,
-                               stores, store-misses, prefetches, prefetch-misses (e.g. L1-dcache-load-misses, LLC-load-
-                               misses, dTLB-load-misses); raw: rHEX, the CPU's event code as for `perf stat -e rHEX` (e.
-                               g. r0843). `--pmc list` prints them all.
+      --pmc=NAME             Linux and Windows: hardware counters to sample besides the CPU time, comma separated NAME[:
+                               INTERVAL]. Each counter adds a `[name]` track per thread, weighted by the counts. On
+                               Windows the names are the ETW profile sources of the machine (e.g. DcacheMisses,
+                               CacheMisses, BranchMispredictions, TotalCycles; the Linux names cycles, cache-misses, L1-
+                               dcache-load-misses... are accepted too) and INTERVAL is the counter events between two
+                               samples. `--pmc list` prints the counters of this machine.
       --pmc-frequency=VALUE  Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given
                                without a period. Default is 4000.
       --paused               Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.

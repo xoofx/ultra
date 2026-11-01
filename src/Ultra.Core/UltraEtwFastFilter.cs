@@ -115,6 +115,8 @@ internal static class UltraEtwFastFilter
             var keep = evt switch
             {
                 SampledProfileTraceData => processIds.Contains(evt.ProcessID),
+                // Hardware counter (--pmc) samples, the process comes from the thread like for the CPU samples
+                PMCCounterProfTraceData => processIds.Contains(evt.ProcessID),
                 // The process of a stack is in its payload
                 StackWalkStackTraceData stack => processIds.Contains(stack.ProcessID),
                 CSwitchTraceData cswitch => processIds.Contains(cswitch.NewProcessID) || processIds.Contains(cswitch.OldProcessID),

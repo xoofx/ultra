@@ -31,6 +31,8 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
     private int _profileThreadIndex;
+    private Dictionary<int, (string Name, int Interval)>? _counterSources;
+    private readonly HashSet<int> _counterSourcesWithSamples = new();
 
     public UltraConverterToFirefoxEtw(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options) : base(traceFiles, options)
     {
@@ -60,12 +62,74 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
     {
         _profileThreadIndex = 0;
 
+        // Profiled with hardware counters: the sources of the trace are read up front, so that a counter that gave no
+        // sample at all can be reported (Windows lists sources that the CPU or the hypervisor does not count)
+        if (Options.HardwareCounters.Count > 0)
+        {
+            _counterSources = ReadCounterSources([]);
+        }
+
         foreach (var processId in processIds)
         {
             var process = _traceLog.Processes.LastProcessWithID(processId);
 
             ConvertProcess(process);
         }
+
+        if (_counterSources is not null)
+        {
+            foreach (var (sourceId, (name, _)) in _counterSources.OrderBy(x => x.Key))
+            {
+                if (!_counterSourcesWithSamples.Contains(sourceId))
+                {
+                    (Options.LogWarning ?? Options.LogProgress)?.Invoke($"Warning: the hardware counter {name} gave no samples in the profiled processes: this CPU or its hypervisor may not count it");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the name and the interval of a hardware counter source, read by <see cref="ReadCounterSources"/>.
+    /// </summary>
+    private (string Name, int Interval) GetCounterSource(int sourceId)
+        => _counterSources is not null && _counterSources.TryGetValue(sourceId, out var source) ? source : ($"PMC{sourceId}", 1);
+
+    /// <summary>
+    /// Reads the hardware counter sources of the trace: the kernel logs a PerfInfo CollectionStart event with the interval of each
+    /// source when the session starts, so only the first seconds of the trace are read. The names are the profile sources of this
+    /// machine (the trace only has the ids); a source the machine does not list is named <c>PMC{id}</c>.
+    /// </summary>
+    private Dictionary<int, (string Name, int Interval)> ReadCounterSources(IEnumerable<int> sourceIds)
+    {
+        var intervals = new Dictionary<int, int>();
+        double? firstTime = null;
+        foreach (var evt in _traceLog.Events)
+        {
+            firstTime ??= evt.TimeStampRelativeMSec;
+            if (evt.TimeStampRelativeMSec - firstTime.Value > 5000)
+            {
+                break;
+            }
+            if (evt is SampledProfileIntervalTraceData interval && interval.SampleSource != UltraEtwHardwareCounter.TimerSourceId)
+            {
+                intervals.TryAdd(interval.SampleSource, interval.NewInterval);
+            }
+        }
+
+        var machineSources = UltraEtwHardwareCounter.GetSources();
+        var result = new Dictionary<int, (string Name, int Interval)>();
+        foreach (var sourceId in sourceIds.Union(intervals.Keys))
+        {
+            var machineSource = machineSources.FirstOrDefault(x => x.Id == sourceId);
+            var name = machineSource.Name ?? $"PMC{sourceId}";
+            if (!intervals.TryGetValue(sourceId, out var sourceInterval) || sourceInterval <= 0)
+            {
+                (Options.LogWarning ?? Options.LogProgress)?.Invoke($"Warning: no interval found in the trace for the hardware counter {name}, its samples count as 1 event each");
+                sourceInterval = 1;
+            }
+            result[sourceId] = (name, sourceInterval);
+        }
+        return result;
     }
 
     /// <summary>
@@ -146,6 +210,14 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             }
         }
 
+        // Hardware counter (--pmc) samples: the names and intervals of their sources, read once for the whole trace
+        var counterSourceIds = threadConverters.SelectMany(x => x.CounterSourceIds).Distinct().ToList();
+        _counterSourcesWithSamples.UnionWith(counterSourceIds);
+        if (counterSourceIds.Count > 0 && (_counterSources is null || counterSourceIds.Any(x => !_counterSources.ContainsKey(x))))
+        {
+            _counterSources = ReadCounterSources(counterSourceIds.Union(_counterSources?.Keys ?? Enumerable.Empty<int>()));
+        }
+
         // Each thread has its own Firefox tables and only reads the TraceLog, so threads are converted in parallel
         Options.LogProgress?.Invoke($"Converting Events for {threads.Count} Threads");
         var threadNames = new string[threads.Count];
@@ -204,6 +276,21 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             }
 
             _profileThreadIndex++;
+        }
+
+        // The hardware counter tracks after all the threads, so the thread indices of the markers above stay right;
+        // a track is visible when its thread is
+        for (var threadIndex = 0; threadIndex < threads.Count; threadIndex++)
+        {
+            foreach (var counterThread in threadConverters[threadIndex].CounterThreads)
+            {
+                ProfilerResult.Threads.Add(counterThread);
+                if (threads[threadIndex].CPUMSec > Options.MinimumCpuTimeBeforeThreadIsVisibleInMs)
+                {
+                    ProfilerResult.Meta.InitialVisibleThreads!.Add(_profileThreadIndex);
+                }
+                _profileThreadIndex++;
+            }
         }
 
         // If we have GCHeapStatsEvents, we can create a Memory track
@@ -729,6 +816,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private readonly Dictionary<MethodIndex, int> _mapMethodIndexToFirefox;
         private readonly Dictionary<string, int> _mapStringToFirefox;
         private FirefoxProfiler.Thread? _profileThread;
+        private readonly Dictionary<int, List<(double Time, CallStackIndex CallStackIndex)>> _counterItems = new();
 
         public ThreadConverter(UltraConverterToFirefoxEtw converter, TraceThread thread, int threadIndex, int profileThreadIndex)
         {
@@ -761,6 +849,16 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         public List<(double, GCHeapStatsEvent)> GCHeapStatsEvents { get; }
 
         /// <summary>
+        /// The profile sources of the hardware counter samples read for this thread.
+        /// </summary>
+        public IEnumerable<int> CounterSourceIds => _counterItems.Keys;
+
+        /// <summary>
+        /// The counter tracks of this thread (one per hardware counter, ordered by source id), available after <see cref="Convert"/>.
+        /// </summary>
+        public List<FirefoxProfiler.Thread> CounterThreads { get; } = new();
+
+        /// <summary>
         /// Reads an event of this thread. Events must be passed in trace order.
         /// </summary>
         /// <param name="evt">The event to read.</param>
@@ -772,6 +870,26 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             var timeStamp = evt.TimeStampRelativeMSec;
             if (timeStamp < thread.StartTimeRelativeMSec || timeStamp > thread.EndTimeRelativeMSec)
             {
+                return;
+            }
+
+            // A hardware counter (--pmc) sample: kept per profile source for the counter tracks of the thread
+            if (evt is PMCCounterProfTraceData pmc)
+            {
+                if (evt.ProcessID == thread.Process.ProcessID && evt.ThreadID == thread.ThreadID)
+                {
+                    var pmcCallStackIndex = evt.CallStackIndex();
+                    if (pmcCallStackIndex != CallStackIndex.Invalid)
+                    {
+                        var sourceId = pmc.ProfileSource;
+                        if (!_counterItems.TryGetValue(sourceId, out var counterItems))
+                        {
+                            counterItems = new();
+                            _counterItems.Add(sourceId, counterItems);
+                        }
+                        counterItems.Add((timeStamp, pmcCallStackIndex));
+                    }
+                }
                 return;
             }
 
@@ -1036,6 +1154,75 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             _mapCodeAddressIndexToMethodIndexFirefox.Clear();
 
             RepairIsolatedIncompleteStacks(profileThread);
+
+            ConvertCounterThreads(processName, threadName);
+            _profileThread = profileThread;
+        }
+
+        /// <summary>
+        /// Converts the hardware counter samples of the thread to a Firefox thread per counter (a track under the thread),
+        /// each sample weighted by the interval of its source (the counter events it stands for), as the Linux converter does.
+        /// </summary>
+        private void ConvertCounterThreads(string processName, string threadName)
+        {
+            var thread = _thread;
+            var counterOrdinal = 0;
+            foreach (var (sourceId, items) in _counterItems.OrderBy(x => x.Key))
+            {
+                counterOrdinal++;
+                var (counterName, interval) = _converter.GetCounterSource(sourceId);
+                var counterThread = new FirefoxProfiler.Thread
+                {
+                    Name = $"{threadName} [{counterName}]",
+                    ProcessName = processName,
+                    ProcessStartupTime = thread.StartTimeRelativeMSec,
+                    RegisterTime = thread.StartTimeRelativeMSec,
+                    ProcessShutdownTime = thread.EndTimeRelativeMSec,
+                    UnregisterTime = thread.EndTimeRelativeMSec,
+                    ProcessType = "default",
+                    Pid = $"{thread.Process.ProcessID}",
+                    // A distinct tid per track, the profiler UI keys some of its state on it
+                    Tid = $"{thread.ThreadID}.{counterOrdinal}",
+                    ShowMarkersInTimeline = false
+                };
+
+                // The Firefox tables are per thread: start the maps afresh for this track
+                _profileThread = counterThread;
+                _mapCallStackIndexToFirefox.Clear();
+                _mapCodeAddressIndexToFirefox.Clear();
+                _mapMethodIndexToFirefox.Clear();
+                _mapStringToFirefox.Clear();
+                _mapCodeAddressIndexToMethodIndexFirefox.Clear();
+
+                var samples = counterThread.Samples;
+                samples.TimeDeltas = new List<double>();
+                samples.Weight = new List<int>();
+                samples.WeightType = "samples";
+
+                double previousTime = 0;
+                foreach (var (time, callStackIndex) in items)
+                {
+                    if (_traceLog.CallStacks.ThreadIndex(callStackIndex) != thread.ThreadIndex)
+                    {
+                        continue;
+                    }
+
+                    samples.TimeDeltas.Add(time - previousTime);
+                    samples.Stack.Add(ConvertCallStack(callStackIndex));
+                    samples.Weight.Add(interval);
+                    samples.Length++;
+                    previousTime = time;
+                }
+
+                CounterThreads.Add(counterThread);
+            }
+
+            _counterItems.Clear();
+            _mapCallStackIndexToFirefox.Clear();
+            _mapCodeAddressIndexToFirefox.Clear();
+            _mapMethodIndexToFirefox.Clear();
+            _mapStringToFirefox.Clear();
+            _mapCodeAddressIndexToMethodIndexFirefox.Clear();
         }
 
         /// <summary>

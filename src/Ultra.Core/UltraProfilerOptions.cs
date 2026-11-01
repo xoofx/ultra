@@ -91,6 +91,12 @@ public class UltraProfilerOptions
     public Action<string>? LogStepProgress;
 
     /// <summary>
+    /// Gets or sets the action to log a warning, kept on screen (progress messages are replaced by the next one).
+    /// <see cref="LogProgress"/> is used when not set.
+    /// </summary>
+    public Action<string>? LogWarning;
+
+    /// <summary>
     /// Gets or sets the action to log messages when waiting for a file to complete.
     /// </summary>
     public Action<string>? WaitingFileToComplete;
@@ -145,8 +151,9 @@ public class UltraProfilerOptions
     public float CpuSamplingIntervalInMs { get; set; }
 
     /// <summary>
-    /// Gets the hardware counters to sample in addition to the CPU time (Linux only), e.g. <c>cycles</c>,
-    /// <c>cache-misses:10000</c>, <c>LLC-load-misses</c>, <c>r0843</c>. Each gives a track per thread.
+    /// Gets the hardware counters to sample in addition to the CPU time (Linux and Windows). On Linux, e.g. <c>cycles</c>,
+    /// <c>cache-misses:10000</c>, <c>LLC-load-misses</c>, <c>r0843</c>; on Windows the ETW profile sources of the machine,
+    /// e.g. <c>DcacheMisses</c>, <c>CacheMisses:65536</c> (see <see cref="UltraEtwHardwareCounter"/>). Each gives a track per thread.
     /// </summary>
     public List<string> HardwareCounters { get; } = new();
 

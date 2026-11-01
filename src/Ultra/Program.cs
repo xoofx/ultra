@@ -69,7 +69,9 @@ internal static class Program
                 { "pid=", "The {PID} of the process to attach the profiler to. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsMacOS() ? ", minimum is 1ms on macOS" : " (8190Hz)")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
-                { "pmc=", $"Linux only: hardware counters to sample besides the CPU time, comma separated {{NAME}}[:PERIOD] (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per thread, weighted by the counts. Names, {PerfEventSpec.HelpText}", v => options.HardwareCounters.AddRange((v ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) },
+                { "pmc=", OperatingSystem.IsWindows()
+                    ? "Linux and Windows: hardware counters to sample besides the CPU time, comma separated {NAME}[:INTERVAL]. Each counter adds a `[name]` track per thread, weighted by the counts. On Windows the names are the ETW profile sources of the machine (e.g. DcacheMisses, CacheMisses, BranchMispredictions, TotalCycles; the Linux names cycles, cache-misses, L1-dcache-load-misses... are accepted too) and INTERVAL is the counter events between two samples. `--pmc list` prints the counters of this machine."
+                    : $"Linux and Windows: hardware counters to sample besides the CPU time, comma separated {{NAME}}[:PERIOD] (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per thread, weighted by the counts. Names, {PerfEventSpec.HelpText}", v => options.HardwareCounters.AddRange((v ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) },
                 { "pmc-frequency=", $"Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given without a period. Default is {options.HardwareCounterFrequency}.", (int v) => options.HardwareCounterFrequency = v },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
                 { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
@@ -228,7 +230,7 @@ internal static class Program
         // `--pmc list` (or help): the accepted counters, then exit
         if (options.HardwareCounters.Any(x => x.Equals("list", StringComparison.OrdinalIgnoreCase) || x.Equals("help", StringComparison.OrdinalIgnoreCase)))
         {
-            Terminal.WriteLine(PerfEventSpec.ListText);
+            Terminal.WriteLine(OperatingSystem.IsWindows() ? UltraEtwHardwareCounter.ListText : PerfEventSpec.ListText);
             return 0;
         }
 
@@ -244,9 +246,22 @@ internal static class Program
                 return Fail(result, output, "Missing pid or executable name");
             }
 
-            if (options.HardwareCounters.Count > 0 && !OperatingSystem.IsLinux())
+            if (options.HardwareCounters.Count > 0 && !OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
             {
-                return Fail(result, output, "--pmc (hardware counters) is only supported on Linux");
+                return Fail(result, output, "--pmc (hardware counters) is only supported on Linux and Windows");
+            }
+
+            if (options.HardwareCounters.Count > 0 && OperatingSystem.IsWindows())
+            {
+                // A wrong name fails here, before the elevation check and the profiling
+                try
+                {
+                    UltraEtwHardwareCounter.ParseAll(options.HardwareCounters, UltraEtwHardwareCounter.GetSources());
+                }
+                catch (ArgumentException ex)
+                {
+                    return Fail(result, output, ex.Message);
+                }
             }
 
             if (!UltraProfiler.IsElevated())
