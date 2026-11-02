@@ -122,7 +122,7 @@ internal static class Program
                 { "<>", "The trace file(s) to convert" },
                 async (_, arguments) => await ConvertAsync(arguments, options, pidList, verbose, resultFile)
             },
-            new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function. Streams the file: fine for a trace of hundreds of MB.")
+            new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function, the GC (collections, pauses, heap) and the allocations per thread and type. Streams the file: fine for a trace of hundreds of MB.")
             {
                 new CommandUsage("Usage: {NAME} [Options] <profile.json.gz>"),
                 _,
@@ -192,7 +192,7 @@ internal static class Program
             "  ultra guide                       The workflow for agents and scripts: capture, results, analysis, MCP",
             "  ultra profile --elevate --duration 30 --result-file result.json --pid 1234",
             "                                    Capture from a non-admin shell (Windows UAC prompt), JSON summary",
-            "  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions",
+            "  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions, GC and allocations",
             "  ultra mcp                         MCP server (stdio) to capture and analyze profiles from an agent",
         };
 

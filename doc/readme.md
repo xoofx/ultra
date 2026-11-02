@@ -207,7 +207,7 @@ Automation and AI agents:
   ultra guide                       The workflow for agents and scripts: capture, results, analysis, MCP
   ultra profile --elevate --duration 30 --result-file result.json --pid 1234
                                     Capture from a non-admin shell (Windows UAC prompt), JSON summary
-  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions
+  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions, GC and allocations
   ultra mcp                         MCP server (stdio) to capture and analyze profiles from an agent
 ```
 
@@ -310,6 +310,32 @@ Usage: ultra report [Options] <profile.json.gz>
 ```
 
 It prints the CPU time of each thread and its share of the process, the top leaf functions over all threads, and for each hardware counter of `--pmc` its events per function. The `[counter]` tracks are reported apart from the CPU threads: a plain sum over all the threads of the file would count them as CPU time.
+
+For a .NET process it then prints the GC, from the GC markers of the trace:
+
+- the collections per generation (and how many were background collections) and their reasons;
+- the GC pauses: from the start of each runtime suspension for a GC to the end of the restart after it, the time the managed threads were stopped, with the part spent suspending the threads; the suspensions for something else (tiered compilation, debugger) are counted apart;
+- the time in blocking collections, and the time the background collections ran beside the program;
+- the GC heap after a collection: the largest (per generation, LOH and POH) and the last;
+- the allocations: the MB allocated (and per second) by kind, per thread and per type. The runtime samples one allocation about every 100 KB allocated (an allocation tick, with the bytes allocated since the previous one), so the totals are close but the types are estimates.
+
+With `--thread`, the allocations are those of the matching threads; the GC lines are for the whole process.
+
+```console
+GC: 679 collections (gen0 493, gen1 1, gen2 185, 178 of them background)
+  reasons: AllocSmall 504, AllocLarge 169, Induced 6
+  GC pauses (managed threads stopped): 847, 206.7 ms = 3.28% of the 6.3 s, longest 5.02 ms, of which 8.5 ms suspending the threads (longest 0.27 ms)
+  in blocking collections: 134.8 ms (longest 4.95 ms); the background collections ran 454.1 ms beside the program
+  GC heap: largest 326.8 MB after a collection (gen0 0.0, gen1 0.0, gen2 0.3, LOH 326.5, POH 0.0 MB), 93.3 MB after the last one
+
+allocations: about 36,034.6 MB = 5,717.1 MB/s, from 242,084 allocation ticks (Small 23,795.3 MB, Large 12,239.3 MB); the runtime samples one allocation about every 100 KB, so the types are estimates
+per thread (MB allocated, share, ticks):
+  0 - Startup Thread (62588)                     36,034.6 MB 100.0%   242,084
+top allocated types (MB allocated, share, ticks):
+    21,414.4 MB  59.4%   210,643  System.Int32[]
+    12,239.3 MB  34.0%     8,021  System.Double[]
+     2,380.5 MB   6.6%    23,416  System.String
+```
 
 ### MCP server
 
