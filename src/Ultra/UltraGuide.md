@@ -77,7 +77,7 @@ If the file is missing, ultra failed before running the command: read its output
 
 ## 3. Analyze the profile
 
-A quick text overview (CPU per thread, top functions over all threads, GC collections and pauses, allocations per thread and type), streaming files of any size:
+A quick text overview (CPU per thread, top functions over all threads, GC collections and pauses, allocations per thread and type, and with `--heap-snapshot` what holds the memory), streaming files of any size:
 
 ```console
 ultra report ultra_MyApp_..._pid_1234.json.gz

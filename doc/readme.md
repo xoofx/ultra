@@ -108,6 +108,37 @@ $ ultra convert --pid 12594 ultra_my_command_2026-10-30_15_23_46.ultraperf
 - Some listed sources never count on some machines (e.g. `DcacheMisses` and `CacheMisses` on a Zen 5 under Hyper-V): ultra warns when a counter gave no samples. L2, L3 and TLB counters have no source on Windows.
 - The hardware counters need the classic `NT Kernel Logger` session, of which there is one per machine: if another tool (WPR, PerfView, xperf) holds it, ultra warns and stops that session.
 
+## GC heap snapshot
+
+`--heap-snapshot` shows what is using the memory of a .NET process (.NET Core 3.0+, on Windows and Linux): at the end of the profiling, once the profiling sessions are stopped, ultra takes a GC heap snapshot of each profiled process, as `dotnet-gcdump` does. Through the diagnostic port of the process, the runtime runs one induced, blocking gen2 collection that reports every live object (its type and size), the references between them and the roots. The threads of the process are stopped for the heap walk: well under a second for a few hundred thousand objects, seconds for tens of millions.
+
+```console
+> ultra profile --heap-snapshot --duration 30 --pid 12594
+```
+
+The snapshot becomes two tracks of the process, `GC heap snapshot [heap]` (weighted by bytes) and `GC heap snapshot [heap objects]` (weighted by objects). Their call tree is the retention paths: each live object is a sample whose stack is the chain of types from a root to it, so the inclusive size of a node is what it keeps alive, and the flame graph shows what holds the memory. An object has many paths: it is given the shortest one from the first class of roots that reaches it, in the order statics, strong handles, pinned handles, stacks, finalizer queue, other roots (weak handles keep nothing alive; a ConditionalWeakTable value is kept by its key). Consecutive objects of the same type (a linked list, a tree of nodes) are folded into one frame. Objects that no root reaches are under `[not reached from a root]`.
+
+`ultra report` prints the snapshot as text: the bytes per root, the top types by size and objects, and the top retainers (the types whose paths hold the most bytes):
+
+```console
+GC heap snapshot (the live objects of a full blocking GC after the profiling): 125.0 MB in 403,700 objects, 565 retention paths
+by root (MB, share):
+       117.0 MB  93.6%  [statics]
+         8.0 MB   6.4%  [pinned handles]
+top types by size (MB, share, objects):
+        99.9 MB  80.0%    100,001  System.Double[]
+        11.0 MB   8.8%          3  System.Byte[]
+         3.1 MB   2.4%    100,000  Node
+top retainers (MB of the objects on the shortest paths from a root through the type, share):
+       108.0 MB  86.4%  static Model
+       108.0 MB  86.4%  System.Collections.Generic.List`1[Node]
+       107.0 MB  85.6%  Node
+```
+
+The events of the snapshot go through an EventPipe buffer in the process, sized by default like the private memory of the process (the events are about the size of the GC heap), at least 256 MB and at most half the free memory of the machine. When events are lost anyway (the runtime writes them faster than ultra reads them), the log next to the profile and `ultra report` say how many and what is missing: the roots by kind, the object and reference blocks. A missing reference block is replaced by unknown references so that the references after it stay with their objects.
+
+The snapshot is written to `..._pid_<pid>_heap.nettrace` and deleted after the conversion unless `--keep-intermediate-etl-files` is passed; `ultra convert` takes it with the other trace files. Only the GC heap is in the snapshot, not the native memory of the process. The MCP call tree tools count the samples of a track, not their weights: for the heap tracks use the report or the Firefox Profiler.
+
 ## Ultra Profiler UI
 
 In order to visualize a trace produced by `ultra.exe` you need to go to https://profiler.firefox.com/ and open the generated `json.gz` trace file.
@@ -194,10 +225,12 @@ Usage: ultra [Options] command
 Available commands:
   profile                    Profile a new process or attach to an existing process
   convert                    Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .
-                               nettrace files, or a list of nettrace files) to a Firefox Profiler json file
+                               nettrace files, or a list of nettrace files; plus the _heap.nettrace of --heap-snapshot)
+                               to a Firefox Profiler json file
   report                     Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread,
-                               the top functions, the hardware counters per function. Streams the file: fine for a
-                               trace of hundreds of MB.
+                               the top functions, the hardware counters per function, the GC (collections, pauses, heap)
+                                and the allocations per thread and type. Streams the file: fine for a trace of hundreds
+                               of MB.
   mcp                        Run the ultra MCP server (Model Context Protocol, stdio): AI agents capture profiles and
                                analyze them with its tools
   guide                      Print the guide for AI agents and automation: capture a profile, read the result, analyze
@@ -240,9 +273,18 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --duration=VALUE       Run the profiler for a maximum duration (seconds). Default is 120s
       --keep-merged-etl-file Keep the merged ETL file. Without it (and without --nofilter) the ETL files are not merged:
                                 the profile is converted from the unmerged files directly.
+      --heap-snapshot        At the end of the profiling, take a GC heap snapshot of each .NET process (.NET Core 3.0+):
+                                the live objects by retention path, from the roots to their types, as the `[heap]` (
+                               bytes) and `[heap objects]` tracks. The threads of the process are stopped during the
+                               heap walk (seconds for a big heap).
+      --heap-snapshot-buffer=VALUE
+                             The EventPipe buffer of the --heap-snapshot in the process, in MB. Default is the private
+                               memory of the process (the events of a snapshot are about the size of its GC heap), at
+                               least 256 MB and at most half the free memory of the machine. The log says the size used
+                               and whether events were lost.
       --keep-intermediate-etl-files
                              Keep the intermediate trace files: the ETL files before merging, or on Linux the .
-                               ultraperf and CLR .nettrace files.
+                               ultraperf and CLR .nettrace files, and the _heap.nettrace of --heap-snapshot.
       --nofilter             Windows only: convert the full merged ETL file. By default only the CPU samples, stacks
                                and context switches of the profiled process(es) are converted, which is much faster on
                                a busy machine.
@@ -320,6 +362,8 @@ For a .NET process it then prints the GC, from the GC markers of the trace:
 - the allocations: the MB allocated (and per second) by kind, per thread and per type. The runtime samples one allocation about every 100 KB allocated (an allocation tick, with the bytes allocated since the previous one), so the totals are close but the types are estimates.
 
 With `--thread`, the allocations are those of the matching threads; the GC lines are for the whole process.
+
+For a profile taken with `--heap-snapshot`, it ends with the snapshot: the bytes per root, the top types and the top retainers (see [GC heap snapshot](#gc-heap-snapshot)).
 
 ```console
 GC: 679 collections (gen0 493, gen1 1, gen2 185, 178 of them background)

@@ -212,14 +212,14 @@ public class UltraProfileReportTests
         var root = Stack(Frame("Main", 0), null);
         thread.Samples.TimeDeltas = new List<double>();
         thread.Samples.WeightType = "samples";
-        if (weights != null) thread.Samples.Weight = new List<int>();
+        if (weights != null) thread.Samples.Weight = new List<long>();
         else thread.Samples.ThreadCPUDelta = new List<int?>();
         for (int i = 0; i < samples.Length; i++)
         {
             var (leaf, offset, cpuNs) = samples[i];
             thread.Samples.Stack.Add(Stack(Frame(leaf, offset), root));
             thread.Samples.TimeDeltas.Add(1);
-            if (weights != null) thread.Samples.Weight!.Add((int)weights[i]);
+            if (weights != null) thread.Samples.Weight!.Add(weights[i]);
             else thread.Samples.ThreadCPUDelta!.Add((int)cpuNs);
             thread.Samples.Length++;
         }

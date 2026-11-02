@@ -75,7 +75,7 @@ public static partial class FirefoxProfiler
 
         public List<double>? TimeDeltas { get; set; }
 
-        public List<int>? Weight { get; set; }
+        public List<long>? Weight { get; set; }
 
         public string WeightType { get; set; } = string.Empty;
 

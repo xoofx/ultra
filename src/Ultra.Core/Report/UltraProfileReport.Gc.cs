@@ -28,10 +28,11 @@ public sealed partial class UltraProfileReport
         Restart,
         Allocation,
         HeapStats,
+        HeapSnapshot,
     }
 
     /// <summary>The payload fields of a GC marker that the report uses.</summary>
-    private sealed record GcMarker(GcMarkerKind Kind, string? Reason = null, string? GcType = null, int Depth = 0, string? TypeName = null, string? AllocationKind = null, long Amount = 0, long[]? Generations = null);
+    private sealed record GcMarker(GcMarkerKind Kind, string? Reason = null, string? GcType = null, int Depth = 0, string? TypeName = null, string? AllocationKind = null, long Amount = 0, long[]? Generations = null, long[]? Counts = null);
 
     /// <summary>The markers of a thread: the GC payloads (null for the others), the names and the times; the arrays are pooled.</summary>
     private sealed record GcMarkers(List<GcMarker?> Data, int[]? Name, int NameCount, double[]? Start, int StartCount, double[]? End, int EndCount);
@@ -82,6 +83,7 @@ public sealed partial class UltraProfileReport
             long amount = 0, totalHeapSize = 0;
             int depth = 0;
             Span<long> generations = stackalloc long[5];
+            Span<long> counts = stackalloc long[6];   // the heap snapshot summary
             while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
             {
                 if (reader.ValueTextEquals("type"u8)) type = ReadString(ref reader);
@@ -97,6 +99,12 @@ public sealed partial class UltraProfileReport
                 else if (reader.ValueTextEquals("generationSize2"u8)) generations[2] = ReadLong(ref reader);
                 else if (reader.ValueTextEquals("generationSize3"u8)) generations[3] = ReadLong(ref reader);
                 else if (reader.ValueTextEquals("generationSize4"u8)) generations[4] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("objects"u8)) counts[0] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("bytes"u8)) counts[1] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("eventsLost"u8)) counts[2] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("objectBlocksLost"u8)) counts[3] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("referenceBlocksLost"u8)) counts[4] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("unknownReferences"u8)) counts[5] = ReadLong(ref reader);
                 else Skip(ref reader);
             }
 
@@ -107,6 +115,7 @@ public sealed partial class UltraProfileReport
                 GCRestartExecutionEngineEvent.TypeId => new GcMarker(GcMarkerKind.Restart),
                 GCAllocationTickEvent.TypeId => new GcMarker(GcMarkerKind.Allocation, TypeName: typeName, AllocationKind: allocationKind, Amount: amount),
                 GCHeapStatsEvent.TypeId => new GcMarker(GcMarkerKind.HeapStats, Amount: totalHeapSize, Generations: generations.ToArray()),
+                HeapSnapshotEvent.TypeId => new GcMarker(GcMarkerKind.HeapSnapshot, Counts: counts.ToArray()),
                 _ => null,
             };
         }

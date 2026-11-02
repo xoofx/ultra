@@ -64,7 +64,9 @@ re-generated.
 2. `get_profile_report path=<file>` — a text overview streamed from the file:
    CPU per thread and share of the process, top leaf functions, hardware
    counters, and the GC (collections, pauses, heap) and allocations per thread
-   and type. Then
+   and type; for a `--heap-snapshot` profile, what holds the memory (bytes per
+   root, top types, top retainers: the `[heap]` tracks are weighted by bytes,
+   so read them in the report, not with the sample-counting tools). Then
    `get_profile_summary` — product, interval, CPU count, thread/sample counts.
 3. `list_threads` — hottest threads first.
 4. `call_tree <threadIndex>` — inclusive top-down merged call tree: the primary

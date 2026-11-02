@@ -819,8 +819,8 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private FirefoxProfiler.Thread? _profileThread;
         private readonly Dictionary<int, List<(double Time, CallStackIndex CallStackIndex)>> _counterItems = new();
 
-        /// <param name="gcStartEventsByCount">The collections started and not ended yet in the process, by GC count: shared by its threads,
-        /// as a background GC starts on the thread that triggers it and ends on the background GC thread.</param>
+        // gcStartEventsByCount: the collections started and not ended yet in the process, by GC count; shared by its threads, as a
+        // background GC starts on the thread that triggers it and ends on the background GC thread
         public ThreadConverter(UltraConverterToFirefoxEtw converter, TraceThread thread, int threadIndex, int profileThreadIndex, Dictionary<int, (double, GCEvent)> gcStartEventsByCount)
         {
             _converter = converter;
@@ -1200,7 +1200,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 
                 var samples = counterThread.Samples;
                 samples.TimeDeltas = new List<double>();
-                samples.Weight = new List<int>();
+                samples.Weight = new List<long>();
                 samples.WeightType = "samples";
 
                 double previousTime = 0;

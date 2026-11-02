@@ -146,6 +146,25 @@ public class UltraProfilerOptions
     public bool FastFilter { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a GC heap snapshot of each .NET process is taken at the end of the profiling (see
+    /// <see cref="UltraHeapSnapshot"/>): the live objects by retention path, as the <c>[heap]</c> and <c>[heap objects]</c> tracks.
+    /// It stops the threads of the process for the heap walk.
+    /// </summary>
+    public bool HeapSnapshot { get; set; }
+
+    /// <summary>
+    /// Gets or sets how long to wait for the heap walk of a <see cref="HeapSnapshot"/>, in seconds. Default is 300.
+    /// </summary>
+    public double HeapSnapshotTimeoutInSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Gets or sets the EventPipe buffer of a <see cref="HeapSnapshot"/> in the profiled process, in MB: events are lost when ultra
+    /// reads them slower than the runtime writes them and the buffer is full. Default is 0: the private memory of the process (at least
+    /// 256 MB, at most half the free memory of the machine), see <see cref="UltraHeapSnapshot.BufferSize"/>.
+    /// </summary>
+    public int HeapSnapshotBufferInMB { get; set; }
+
+    /// <summary>
     /// Gets or sets the CPU sampling interval in milliseconds.
     /// </summary>
     public float CpuSamplingIntervalInMs { get; set; }

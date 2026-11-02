@@ -77,7 +77,9 @@ internal static class Program
                 { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
                 { "duration=", $"Run the profiler for a maximum duration (seconds). Default is {options.DurationInSeconds}s", (double duration) => options.DurationInSeconds = duration },
                 { "keep-merged-etl-file", "Keep the merged ETL file. Without it (and without --nofilter) the ETL files are not merged: the profile is converted from the unmerged files directly.", v => options.KeepMergedEtl = v is not null },
-                { "keep-intermediate-etl-files", "Keep the intermediate trace files: the ETL files before merging, or on Linux the .ultraperf and CLR .nettrace files.", v => options.KeepEtlIntermediateFiles = v is not null },
+                { "heap-snapshot", "At the end of the profiling, take a GC heap snapshot of each .NET process (.NET Core 3.0+): the live objects by retention path, from the roots to their types, as the `[heap]` (bytes) and `[heap objects]` tracks. The threads of the process are stopped during the heap walk (seconds for a big heap).", v => options.HeapSnapshot = v is not null },
+                { "heap-snapshot-buffer=", "The EventPipe buffer of the --heap-snapshot in the process, in MB. Default is the private memory of the process (the events of a snapshot are about the size of its GC heap), at least 256 MB and at most half the free memory of the machine. The log says the size used and whether events were lost.", (int v) => options.HeapSnapshotBufferInMB = v },
+                { "keep-intermediate-etl-files", "Keep the intermediate trace files: the ETL files before merging, or on Linux the .ultraperf and CLR .nettrace files, and the _heap.nettrace of --heap-snapshot.", v => options.KeepEtlIntermediateFiles = v is not null },
                 { "nofilter", "Windows only: convert the full merged ETL file. By default only the CPU samples, stacks and context switches of the profiled process(es) are converted, which is much faster on a busy machine.", v => options.FastFilter = v is null },
                 { "mode=", "Defines how the stdout/stderr of a program explicitly started by ultra should be integrated in its output. Default is `silent` which will not mix program's output. The other options are: `raw` is going to mix ultra and program output together in a raw output. `live` is going to mix ultra and program output within a live table.", v =>
                     {
@@ -109,7 +111,7 @@ internal static class Program
                 "                                                     From a non-admin shell or an agent (Windows)",
                 async (_, arguments) => await ProfileAsync(args, arguments, options, pidList, verbose, elevate, resultFile, stopFile)
             },
-            new Command("convert", "Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .nettrace files, or a list of nettrace files) to a Firefox Profiler json file")
+            new Command("convert", "Convert an existing trace file (one ETL file, a Linux .ultraperf file with its CLR .nettrace files, or a list of nettrace files; plus the _heap.nettrace of --heap-snapshot) to a Firefox Profiler json file")
             {
                 new CommandUsage("Usage: {NAME} --pid xxx [<etl_file_name.etl> | <trace.ultraperf> [<trace_pid_clr.nettrace>] | <file1_sampler.nettrace> <file1_clr.nettrace>]"),
                 _,
@@ -235,10 +237,13 @@ internal static class Program
         }
 
         var child = UltraElevation.Child;
-        var output = child?.Output ?? UltraOutput.Create(options.ConsoleMode, verbose, interactive: !options.Paused);
+        var log = new UltraLogOutput(child?.Output ?? UltraOutput.Create(options.ConsoleMode, verbose, interactive: !options.Paused), $"ultra {Version} profile {string.Join(" ", allArguments.SkipWhile(x => x != "profile").Skip(1))}");
+        UltraOutput output = log;
         var result = new UltraCommandResult { Command = "profile", StartTime = DateTimeOffset.Now };
         var clock = Stopwatch.StartNew();
         bool writeResult = resultFile is not null;
+        // The log of the run (next to the profiles), once the profiling started: not for a mistyped command line
+        bool writeLog = false;
         try
         {
             if (arguments.Length == 0 && pidList.Count == 0)
@@ -358,6 +363,7 @@ internal static class Program
             output.Attach(options);
 
             List<string> jsonGzOutputs = [];
+            writeLog = true;
             try
             {
                 await output.RunAsync("Profiling", async () =>
@@ -397,12 +403,21 @@ internal static class Program
         }
         finally
         {
+            if (writeLog)
+            {
+                log.Write(result.Profiles.Select(x => x.Path), LogFileWithoutProfile(options, result));
+            }
+
             if (writeResult)
             {
                 WriteResult(result, resultFile!, clock);
             }
         }
     }
+
+    /// <summary>The log of a run that wrote no profile: next to where the profile would be.</summary>
+    private static string LogFileWithoutProfile(UltraProfilerOptions options, UltraCommandResult result)
+        => $"{options.BaseOutputFileName ?? $"ultra_{result.StartTime:yyyy-MM-dd_HH_mm_ss}"}.log";
 
     private static bool ShouldStartProfiling(UltraOutput output, UltraProfiler profiler)
     {
@@ -433,9 +448,11 @@ internal static class Program
 
     private static async Task<int> ConvertAsync(string[] arguments, UltraProfilerOptions options, List<int> pidList, bool verbose, string? resultFile)
     {
-        var output = UltraElevation.Child?.Output ?? UltraOutput.Create(UltraProfilerConsoleMode.Silent, verbose);
+        var log = new UltraLogOutput(UltraElevation.Child?.Output ?? UltraOutput.Create(UltraProfilerConsoleMode.Silent, verbose), $"ultra {Version} convert --pid {string.Join(",", pidList)} {string.Join(" ", arguments)}");
+        UltraOutput output = log;
         var result = new UltraCommandResult { Command = "convert", StartTime = DateTimeOffset.Now };
         var clock = Stopwatch.StartNew();
+        bool writeLog = false;
         try
         {
             if (arguments.Length == 0)
@@ -450,6 +467,7 @@ internal static class Program
 
             output.Attach(options);
             options.EnsureDirectoryForBaseOutputFileName();
+            writeLog = true;
 
             List<string> fileOutputs = [];
             var profiler = UltraProfiler.Create();
@@ -499,6 +517,11 @@ internal static class Program
         }
         finally
         {
+            if (writeLog)
+            {
+                log.Write(result.Profiles.Select(x => x.Path), LogFileWithoutProfile(options, result));
+            }
+
             if (resultFile is not null)
             {
                 WriteResult(result, resultFile, clock);
@@ -522,7 +545,12 @@ internal static class Program
             }
         }
 
-        if (traceFile.IsNettrace)
+        if (traceFile.IsHeapSnapshot)
+        {
+            // x_heap.nettrace (a heap snapshot converted alone): x.json.gz
+            baseName = baseName.Substring(0, baseName.Length - "_heap".Length);
+        }
+        else if (traceFile.IsNettrace)
         {
             if (baseName.EndsWith(UltraProfiler.NettracePostfixNameSampler))
             {

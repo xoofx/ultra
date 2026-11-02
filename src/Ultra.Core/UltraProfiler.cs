@@ -216,6 +216,7 @@ public abstract class UltraProfiler : IDisposable
         LastTimeProgress = ProfilerClock.Elapsed;
 
         var runner = CreateRunner(ultraProfilerOptions, processList, baseName, singleProcess);
+        var heapSnapshotFiles = new List<string>();
         try
         {
             await runner.OnStart();
@@ -314,6 +315,21 @@ public abstract class UltraProfiler : IDisposable
                 ultraProfilerOptions.LogProgress?.Invoke(singleProcess is not null ? $"End Profiling Process" : $"End Profiling {processList.Count} Processes");
 
                 await runner.OnStop();
+
+                // After the profiling sessions stopped: the induced GC and the heap walk are not in the profile
+                if (ultraProfilerOptions.HeapSnapshot && !StopRequested)
+                {
+                    foreach (var process in processList)
+                    {
+                        // ..._pid_{pid}_heap.nettrace: the pid is the number before the postfix
+                        var pidPostfix = $"_pid_{process.Id}";
+                        var heapFile = $"{runner.BaseFileName}{(runner.BaseFileName.EndsWith(pidPostfix, StringComparison.Ordinal) ? "" : pidPostfix)}{UltraHeapSnapshot.FilePostfix}";
+                        if (await UltraHeapSnapshot.TakeAsync(process, heapFile, ultraProfilerOptions, CancellationToken))
+                        {
+                            heapSnapshotFiles.Add(heapFile);
+                        }
+                    }
+                }
             }
         }
         catch
@@ -343,8 +359,28 @@ public abstract class UltraProfiler : IDisposable
         if (traceFiles.Count > 0)
         {
             // With several processes, each gets its own file named like a single process profile
-            jsonFinalFiles = await Convert(baseName, traceFiles, processList.Select(x => x.Id).ToList(), ultraProfilerOptions,
-                (pid, name) => ultraProfilerOptions.BaseOutputFileName is { } output ? $"{output}_pid_{pid}" : $"ultra_{(name.Length > 0 ? $"{name}_" : "")}{currentTime:yyyy-MM-dd_HH_mm_ss}_pid_{pid}");
+            try
+            {
+                jsonFinalFiles = await Convert(baseName, [.. traceFiles, .. heapSnapshotFiles.Select(x => new UltraProfilerTraceFile(x))], processList.Select(x => x.Id).ToList(), ultraProfilerOptions,
+                    (pid, name) => ultraProfilerOptions.BaseOutputFileName is { } output ? $"{output}_pid_{pid}" : $"ultra_{(name.Length > 0 ? $"{name}_" : "")}{currentTime:yyyy-MM-dd_HH_mm_ss}_pid_{pid}");
+            }
+            finally
+            {
+                if (!ultraProfilerOptions.KeepEtlIntermediateFiles)
+                {
+                    foreach (var heapFile in heapSnapshotFiles)
+                    {
+                        try
+                        {
+                            File.Delete(heapFile);
+                        }
+                        catch
+                        {
+                            // Ignore
+                        }
+                    }
+                }
+            }
         }
 
         await runner.OnFinalCleanup();

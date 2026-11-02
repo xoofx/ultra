@@ -300,6 +300,117 @@ internal sealed class UltraLiveOutput(bool showProgramOutput, bool verbose) : Ul
 }
 
 /// <summary>
+/// Passes everything to another output and keeps the permanent lines and the steps (not the transient status, nor the output of the
+/// program), with their time, for the small log written next to each profile (<c>&lt;profile&gt;.log</c>): the warnings of a run
+/// are still there after the console is gone.
+/// </summary>
+internal sealed class UltraLogOutput(UltraOutput inner, string header) : UltraOutput
+{
+    private readonly Lock _lock = new();
+    private readonly List<string> _lines = [$"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {header}"];
+    private string? _lastStepKey;
+
+    public override void MarkupLine(string markup)
+    {
+        inner.MarkupLine(markup);
+        Add(PlainText(markup), null);
+    }
+
+    public override void Status(string text) => inner.Status(text);
+
+    public override void Step(string text)
+    {
+        inner.Step(text);
+        // A step repeated with a new percentage (e.g. "Loading perf events 10%") keeps one line, the last
+        Add(text, text.Contains('%') ? string.Concat(text.Where(c => !char.IsAsciiDigit(c))) : null);
+    }
+
+    public override void ProgramOutput(string line, bool isError) => inner.ProgramOutput(line, isError);
+
+    public override Task RunAsync(string initialStatus, Func<Task> work) => inner.RunAsync(initialStatus, work);
+
+    private void Add(string text, string? stepKey)
+    {
+        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {text}";
+        lock (_lock)
+        {
+            if (stepKey is not null && stepKey == _lastStepKey)
+            {
+                _lines[^1] = line;
+            }
+            else
+            {
+                _lines.Add(line);
+            }
+            _lastStepKey = stepKey;
+        }
+    }
+
+    /// <summary>
+    /// Writes the log next to each profile (<c>x.json.gz</c> gives <c>x.log</c>), or to <paramref name="fallback"/> without any.
+    /// </summary>
+    public void Write(IEnumerable<string> profiles, string fallback)
+    {
+        string[] lines;
+        lock (_lock)
+        {
+            lines = [.. _lines];
+        }
+
+        var paths = profiles.Select(x => (x.EndsWith(".json.gz", StringComparison.OrdinalIgnoreCase) ? x[..^".json.gz".Length] : Path.ChangeExtension(x, null)) + ".log").ToList();
+        if (paths.Count == 0) paths.Add(fallback);
+        foreach (var path in paths)
+        {
+            try
+            {
+                File.WriteAllLines(path, lines);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                inner.Warning($"Cannot write the log {path}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>The text of a markup line: the [style] tags removed, the escaped [[ and ]] made single.</summary>
+    internal static string PlainText(string markup)
+    {
+        var text = new StringBuilder(markup.Length);
+        for (int i = 0; i < markup.Length; i++)
+        {
+            var c = markup[i];
+            if (c == '[')
+            {
+                if (i + 1 < markup.Length && markup[i + 1] == '[')
+                {
+                    text.Append('[');
+                    i++;
+                    continue;
+                }
+
+                var end = markup.IndexOf(']', i + 1);
+                if (end < 0)
+                {
+                    text.Append(markup, i, markup.Length - i);
+                    break;
+                }
+                i = end;
+            }
+            else if (c == ']')
+            {
+                if (i + 1 < markup.Length && markup[i + 1] == ']') i++;
+                text.Append(']');
+            }
+            else
+            {
+                text.Append(c);
+            }
+        }
+        return text.ToString();
+    }
+}
+
+/// <summary>
 /// The output of the elevated ultra (`--elevate`): every call is appended as a JSON line to a file that the ultra which
 /// started it reads and replays on its own console (see <see cref="UltraElevation"/>).
 /// </summary>
