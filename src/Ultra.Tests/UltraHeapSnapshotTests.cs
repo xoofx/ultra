@@ -167,4 +167,39 @@ public class UltraHeapSnapshotTests
         Assert.IsNull(UltraHeapSnapshot.GetProcessId("ultra_app_clr.nettrace"));
         Assert.IsTrue(new UltraProfilerTraceFile("a_pid_5_heap.nettrace").IsHeapSnapshot);
     }
+
+    /// <summary>
+    /// A real snapshot of the test process converted alone (no CPU trace) for two processes: the process without a snapshot gets no
+    /// profile (it used to fail on an empty file name), the other gets the heap tracks.
+    /// </summary>
+    [TestMethod]
+    public async Task HeapSnapshotsConvertedAloneSkipTheProcessesWithoutOne()
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+        {
+            Assert.Inconclusive("The heap snapshot is taken through the diagnostic port, checked on Windows and Linux");
+        }
+
+        var process = System.Diagnostics.Process.GetCurrentProcess();
+        var folder = Directory.CreateTempSubdirectory("ultra_heap_test_");
+        try
+        {
+            var heapFile = Path.Combine(folder.FullName, $"ultra_test_pid_{process.Id}{UltraHeapSnapshot.FilePostfix}");
+            var options = new UltraProfilerOptions { HeapSnapshotTimeoutInSeconds = 60 };
+            Assert.IsTrue(await UltraHeapSnapshot.TakeAsync(process, heapFile, options, CancellationToken.None), "the snapshot of the test process is taken");
+
+            var otherPid = process.Id == int.MaxValue ? 1 : process.Id + 1;
+            var profiles = UltraConverterToFirefox.ConvertEachProcess([new UltraProfilerTraceFile(heapFile)], options, [otherPid, process.Id]).ToList();
+
+            Assert.AreEqual(1, profiles.Count);
+            Assert.AreEqual(process.Id, profiles[0].ProcessId);
+            var trackNames = profiles[0].Profile.Threads.Select(x => x.Name).ToList();
+            CollectionAssert.Contains(trackNames, $"GC heap snapshot [{UltraHeapSnapshotConverter.BytesCounter}]");
+            CollectionAssert.Contains(trackNames, $"GC heap snapshot [{UltraHeapSnapshotConverter.ObjectsCounter}]");
+        }
+        finally
+        {
+            folder.Delete(true);
+        }
+    }
 }

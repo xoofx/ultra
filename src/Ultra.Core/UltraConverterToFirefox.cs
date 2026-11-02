@@ -106,8 +106,10 @@ public abstract class UltraConverterToFirefox : IDisposable
             FirefoxProfiler.Profile profile;
             if (traceFiles.Count == 0)
             {
-                // Only GC heap snapshots: a profile with their tracks
-                profile = UltraHeapSnapshotConverter.CreateProfile(heapSnapshots.FirstOrDefault(x => x.ProcessId == processId).File ?? string.Empty);
+                // Only GC heap snapshots: a profile with their tracks, none for a process without a snapshot
+                var snapshotFile = heapSnapshots.FirstOrDefault(x => x.ProcessId == processId).File;
+                if (snapshotFile is null) continue;
+                profile = UltraHeapSnapshotConverter.CreateProfile(snapshotFile);
             }
             else
             {
