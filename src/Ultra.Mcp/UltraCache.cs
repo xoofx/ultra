@@ -15,6 +15,9 @@ internal sealed class LoadedProfile
 
     public long FileSize { get; init; }
 
+    /// <summary>The memory the loaded profile takes, estimated from its tables (see <see cref="UltraCache.EstimateMemory"/>).</summary>
+    public long EstimatedBytes { get; init; }
+
     public DateTime LastWriteTimeUtc { get; init; }
 
     public DateTime LoadedAtUtc { get; init; }
@@ -29,10 +32,6 @@ internal sealed class LoadedProfile
 /// </summary>
 internal sealed class UltraCache
 {
-    // The deserialized object graph (parallel List<int> tables) is roughly this
-    // multiple of the JSON file size in memory.
-    public const long MemoryMultiplier = 15;
-
     private readonly object syncRoot = new();
     // Serializes the slow load path so two callers can't race deserializing.
     private readonly object loadLock = new();
@@ -93,17 +92,19 @@ internal sealed class UltraCache
                 }
             }
 
+            // From the loaded tables, not the file size: a .json.gz is compressed 10-60x
+            long estimated = EstimateMemory(profile);
             var entry = new LoadedProfile
             {
                 Path = path,
                 Profile = profile,
                 FileSize = info.Length,
+                EstimatedBytes = estimated,
                 LastWriteTimeUtc = info.LastWriteTimeUtc,
                 LoadedAtUtc = DateTime.UtcNow,
                 LastAccessedUtc = DateTime.UtcNow
             };
 
-            long estimated = info.Length * MemoryMultiplier;
             lock (syncRoot)
             {
                 if (entries.Remove(path))
@@ -210,7 +211,7 @@ internal sealed class UltraCache
             return;
         }
 
-        long used = entries.Values.Sum(e => e.FileSize * MemoryMultiplier);
+        long used = entries.Values.Sum(e => e.EstimatedBytes);
         if (used + incoming <= MemoryBudgetBytes)
         {
             return;
@@ -220,7 +221,7 @@ internal sealed class UltraCache
         foreach (var e in lru)
         {
             entries.Remove(e.Path);
-            used -= e.FileSize * MemoryMultiplier;
+            used -= e.EstimatedBytes;
             if (used + incoming <= MemoryBudgetBytes)
             {
                 break;
@@ -228,6 +229,80 @@ internal sealed class UltraCache
         }
 
         ForceCollect();
+    }
+
+    /// <summary>
+    /// The memory a deserialized profile takes, estimated from its tables: every list counts its capacity times the size of its
+    /// elements, every string its characters; lists of objects are walked into when small (threads, counters, libraries), counted
+    /// at <see cref="ObjectBytes"/> each when large (marker payloads).
+    /// </summary>
+    internal static long EstimateMemory(FirefoxProfiler.Profile profile) => EstimateObject(profile, 0);
+
+    private const long ObjectBytes = 64;
+
+    private const int MaxWalkedElements = 10_000;
+
+    private static long EstimateObject(object? value, int depth)
+    {
+        if (value is null) return 0;
+        if (value is string s) return 22 + 2L * s.Length;
+        var type = value.GetType();
+        if (type.IsValueType || depth > 8) return 0;
+
+        long bytes = 24;
+        if (value is System.Collections.IList list)
+        {
+            var elementType = type.IsGenericType ? type.GetGenericArguments()[0] : typeof(object);
+            var capacity = type.GetProperty("Capacity")?.GetValue(list) is int c ? c : list.Count;
+            bytes += (long)capacity * ElementSize(elementType);
+            if (elementType == typeof(string))
+            {
+                foreach (var item in list) bytes += EstimateObject(item, depth + 1);
+            }
+            else if (!elementType.IsValueType)
+            {
+                if (list.Count <= MaxWalkedElements)
+                {
+                    foreach (var item in list) bytes += EstimateObject(item, depth + 1);
+                }
+                else
+                {
+                    bytes += list.Count * ObjectBytes;
+                }
+            }
+            return bytes;
+        }
+
+        // Only the profile model is walked into (not the framework types it may hold)
+        if (type.Namespace is not null && !type.FullName!.StartsWith("Ultra", StringComparison.Ordinal) && !type.FullName.Contains("FirefoxProfiler", StringComparison.Ordinal))
+        {
+            return ObjectBytes;
+        }
+
+        foreach (var property in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0) continue;
+            var propertyType = property.PropertyType;
+            if (propertyType.IsValueType) continue;
+            bytes += EstimateObject(property.GetValue(value), depth + 1);
+        }
+        return bytes;
+    }
+
+    private static int ElementSize(Type type)
+    {
+        if (!type.IsValueType) return 8;
+        var underlying = Nullable.GetUnderlyingType(type);
+        var size = (underlying ?? type) switch
+        {
+            var t when t == typeof(bool) || t == typeof(byte) => 1,
+            var t when t == typeof(short) || t == typeof(char) => 2,
+            var t when t == typeof(int) || t == typeof(float) => 4,
+            var t when t.IsEnum => 4,
+            _ => 8,
+        };
+        // A Nullable<T> is the value plus a bool, aligned
+        return underlying is null ? size : Math.Max(size * 2, 2);
     }
 
     private static void ForceCollect()

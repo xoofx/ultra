@@ -37,22 +37,48 @@ internal static partial class UltraTools
         return funcs;
     }
 
-    // Memoized WalkFuncs keyed by stackTable row. Samples reference stack rows
-    // heavily-deduplicated, so caching the leaf->root func list per row keeps
-    // the repeated whole-thread aggregations (call_tree / find_hotspots /
-    // focus_function) from re-walking the same prefix chains for every sample.
-    // Memory is bounded by stackTable.Length, not sample count.
-    internal static List<int> WalkFuncsMemo(FirefoxProfiler.Thread thread, int stackIndex, List<int>?[] memo)
+    // The samples of a thread within the time window, summed per stack row: the aggregation tools then walk each distinct stack
+    // once (samples + unique stacks x depth, not samples x depth). A sample counts its weight when the track has weights (the
+    // [counter] tracks of --pmc: events; the [heap] tracks of --heap-snapshot: bytes or objects), else 1.
+    internal sealed class StackWeights
     {
-        if ((uint)stackIndex < (uint)memo.Length && memo[stackIndex] is { } cached)
-        {
-            return cached;
-        }
+        public readonly Dictionary<int, long> ByStack = new();
 
-        var result = WalkFuncs(thread, stackIndex);
-        if ((uint)stackIndex < (uint)memo.Length)
+        public long Total;
+
+        public long Samples;
+
+        // The unit of the weights ("bytes", "samples"...), null when the track has none (one per sample)
+        public string? WeightType;
+
+        // "  weightType=bytes (565 samples)" for a weighted track, empty otherwise: the counts are then weights, not samples
+        public string Suffix => WeightType is null ? string.Empty : $"  weightType={WeightType} ({Samples} samples)";
+    }
+
+    internal static StackWeights AggregateStacks(FirefoxProfiler.Thread thread, double? startMs, double? endMs)
+    {
+        var samples = thread.Samples;
+        var weights = samples.Weight;
+        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
+        int stackCount = thread.StackTable.Frame.Count;
+        var result = new StackWeights { WeightType = weights is null ? null : (string.IsNullOrEmpty(samples.WeightType) ? "weight" : samples.WeightType) };
+        for (int i = 0; i < samples.Stack.Count; i++)
         {
-            memo[stackIndex] = result;
+            if (samples.Stack[i] is not int si || si < 0 || si >= stackCount)
+            {
+                continue;
+            }
+
+            if (times != null && !InWindow(times[i], startMs, endMs))
+            {
+                continue;
+            }
+
+            long w = weights != null && i < weights.Count ? weights[i] : 1;
+            ref var slot = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(result.ByStack, si, out _);
+            slot += w;
+            result.Total += w;
+            result.Samples++;
         }
 
         return result;
@@ -206,28 +232,15 @@ internal static partial class UltraTools
                 continue;
             }
 
-            var samples = thread.Samples;
-            double[]? times = MaybeSampleTimes(thread, startMs, endMs);
-            var memo = new List<int>?[thread.StackTable.Frame.Count];
-            var self = new Dictionary<int, int>();
-            var incl = new Dictionary<int, int>();
-            int anyIncl = 0;
-            int totalWithStack = 0;
+            var stacks = AggregateStacks(thread, startMs, endMs);
+            var self = new Dictionary<int, long>();
+            var incl = new Dictionary<int, long>();
+            long anyIncl = 0;
+            long totalWithStack = stacks.Total;
             var distinct = new HashSet<int>();
-            for (int i = 0; i < samples.Stack.Count; i++)
+            foreach (var (si, w) in stacks.ByStack)
             {
-                if (samples.Stack[i] is not int si || si < 0)
-                {
-                    continue;
-                }
-
-                if (times != null && !InWindow(times[i], startMs, endMs))
-                {
-                    continue;
-                }
-
-                totalWithStack++;
-                var funcs = WalkFuncsMemo(thread, si, memo);
+                var funcs = WalkFuncs(thread, si);
                 if (funcs.Count == 0)
                 {
                     continue;
@@ -235,7 +248,7 @@ internal static partial class UltraTools
 
                 if (matched.Contains(funcs[0]))
                 {
-                    self[funcs[0]] = self.GetValueOrDefault(funcs[0]) + 1;
+                    self[funcs[0]] = self.GetValueOrDefault(funcs[0]) + w;
                 }
 
                 distinct.Clear();
@@ -249,14 +262,14 @@ internal static partial class UltraTools
 
                     if (matched.Contains(f))
                     {
-                        incl[f] = incl.GetValueOrDefault(f) + 1;
+                        incl[f] = incl.GetValueOrDefault(f) + w;
                         touched = true;
                     }
                 }
 
                 if (touched)
                 {
-                    anyIncl++;
+                    anyIncl += w;
                 }
             }
 
@@ -272,14 +285,15 @@ internal static partial class UltraTools
               .Append("  matchedFuncs=").Append(matched.Count)
               .Append("  inclusiveAny=").Append(anyIncl)
               .Append(" (").Append((100.0 * anyIncl / tot).ToString("0.0")).Append("% of ").Append(totalWithStack).Append(" sampled)")
+              .Append(stacks.Suffix)
               .AppendLine();
             var ranked = matched.Where(f => incl.ContainsKey(f) || self.ContainsKey(f))
                 .OrderByDescending(f => incl.GetValueOrDefault(f))
                 .Take(take);
             foreach (var f in ranked)
             {
-                int ic = incl.GetValueOrDefault(f);
-                int sc = self.GetValueOrDefault(f);
+                long ic = incl.GetValueOrDefault(f);
+                long sc = self.GetValueOrDefault(f);
                 sb.Append("  incl ").Append(ic).Append(" (").Append((100.0 * ic / tot).ToString("0.0")).Append("%)")
                   .Append("  self ").Append(sc).Append(" (").Append((100.0 * sc / tot).ToString("0.0")).Append("%)  ")
                   .Append(FuncName(thread, f))
@@ -325,35 +339,22 @@ internal static partial class UltraTools
         }
 
         var root = new TreeAgg();
-        var samples = thread.Samples;
-        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
-        var memo = new List<int>?[thread.StackTable.Frame.Count];
-        for (int i = 0; i < samples.Stack.Count; i++)
+        var stacks = AggregateStacks(thread, startMs, endMs);
+        foreach (var (si, w) in stacks.ByStack)
         {
-            if (samples.Stack[i] is not int si || si < 0)
+            // leaf->root; the top-down tree goes root->leaf, so it is read backwards (no copy)
+            var funcs = WalkFuncs(thread, si);
+            if (funcs.Count == 0)
             {
                 continue;
             }
 
-            if (times != null && !InWindow(times[i], startMs, endMs))
-            {
-                continue;
-            }
-
-            var walked = WalkFuncsMemo(thread, si, memo);
-            if (walked.Count == 0)
-            {
-                continue;
-            }
-
-            // Root->leaf order for a top-down tree; copy so the memo stays leaf->root.
-            var funcs = new List<int>(walked);
-            funcs.Reverse();
-            int startIdx = 0;
+            // The focus is the root-most matching frame: the last match in leaf->root order
+            int startIdx = funcs.Count - 1;
             if (focusSet != null)
             {
                 startIdx = -1;
-                for (int k = 0; k < funcs.Count; k++)
+                for (int k = funcs.Count - 1; k >= 0; k--)
                 {
                     if (focusSet.Contains(funcs[k]))
                     {
@@ -368,9 +369,9 @@ internal static partial class UltraTools
                 }
             }
 
-            root.Incl++;
+            root.Incl += w;
             var node = root;
-            for (int k = startIdx; k < funcs.Count; k++)
+            for (int k = startIdx; k >= 0; k--)
             {
                 int f = funcs[k];
                 if (!node.Children.TryGetValue(f, out var child))
@@ -379,17 +380,17 @@ internal static partial class UltraTools
                     node.Children[f] = child;
                 }
 
-                child.Incl++;
+                child.Incl += w;
                 node = child;
             }
 
-            node.Self++;
+            node.Self += w;
         }
 
         double total = root.Incl > 0 ? root.Incl : 1;
         var sb = new StringBuilder();
         sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name)
-          .Append("  samplesInTree=").Append(root.Incl);
+          .Append("  samplesInTree=").Append(root.Incl).Append(stacks.Suffix);
         if (focusSet != null)
         {
             sb.Append("  focus=").Append(focus);
@@ -431,23 +432,11 @@ internal static partial class UltraTools
         }
 
         var root = new TreeAgg();
-        var samples = thread.Samples;
-        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
-        var memo = new List<int>?[thread.StackTable.Frame.Count];
-        for (int i = 0; i < samples.Stack.Count; i++)
+        var stacks = AggregateStacks(thread, startMs, endMs);
+        foreach (var (si, w) in stacks.ByStack)
         {
-            if (samples.Stack[i] is not int si || si < 0)
-            {
-                continue;
-            }
-
-            if (times != null && !InWindow(times[i], startMs, endMs))
-            {
-                continue;
-            }
-
             // funcs is leaf->root; walking increasing index climbs toward callers.
-            var funcs = WalkFuncsMemo(thread, si, memo);
+            var funcs = WalkFuncs(thread, si);
             if (funcs.Count == 0)
             {
                 continue;
@@ -472,7 +461,7 @@ internal static partial class UltraTools
                 }
             }
 
-            root.Incl++;
+            root.Incl += w;
             var node = root;
             for (int k = startIdx; k < funcs.Count; k++)
             {
@@ -483,17 +472,17 @@ internal static partial class UltraTools
                     node.Children[f] = child;
                 }
 
-                child.Incl++;
+                child.Incl += w;
                 node = child;
             }
 
-            node.Self++;
+            node.Self += w;
         }
 
         double total = root.Incl > 0 ? root.Incl : 1;
         var sb = new StringBuilder();
         sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name)
-          .Append("  samplesInTree=").Append(root.Incl).Append("  (inverted / bottom-up)");
+          .Append("  samplesInTree=").Append(root.Incl).Append(stacks.Suffix).Append("  (inverted / bottom-up)");
         if (focusSet != null)
         {
             sb.Append("  focus=").Append(focus);
@@ -566,26 +555,13 @@ internal static partial class UltraTools
             throw new McpException($"No function matches '{func}' in thread {threadIndex}.");
         }
 
-        var samples = thread.Samples;
-        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
-        var memo = new List<int>?[thread.StackTable.Frame.Count];
-        int selfCount = 0, inclCount = 0, totalWithStack = 0;
-        var callers = new Dictionary<int, int>();
-        var callees = new Dictionary<int, int>();
-        for (int i = 0; i < samples.Stack.Count; i++)
+        var stacks = AggregateStacks(thread, startMs, endMs);
+        long selfCount = 0, inclCount = 0, totalWithStack = stacks.Total;
+        var callers = new Dictionary<int, long>();
+        var callees = new Dictionary<int, long>();
+        foreach (var (si, w) in stacks.ByStack)
         {
-            if (samples.Stack[i] is not int si || si < 0)
-            {
-                continue;
-            }
-
-            if (times != null && !InWindow(times[i], startMs, endMs))
-            {
-                continue;
-            }
-
-            totalWithStack++;
-            var funcs = WalkFuncsMemo(thread, si, memo);
+            var funcs = WalkFuncs(thread, si);
             if (funcs.Count == 0)
             {
                 continue;
@@ -593,7 +569,7 @@ internal static partial class UltraTools
 
             if (target.Contains(funcs[0]))
             {
-                selfCount++;
+                selfCount += w;
             }
 
             int topMost = -1, bottomMost = -1;
@@ -615,23 +591,23 @@ internal static partial class UltraTools
                 continue;
             }
 
-            inclCount++;
+            inclCount += w;
             if (topMost + 1 < funcs.Count && !target.Contains(funcs[topMost + 1]))
             {
                 int caller = funcs[topMost + 1];
-                callers[caller] = callers.GetValueOrDefault(caller) + 1;
+                callers[caller] = callers.GetValueOrDefault(caller) + w;
             }
 
             if (bottomMost - 1 >= 0 && !target.Contains(funcs[bottomMost - 1]))
             {
                 int callee = funcs[bottomMost - 1];
-                callees[callee] = callees.GetValueOrDefault(callee) + 1;
+                callees[callee] = callees.GetValueOrDefault(callee) + w;
             }
         }
 
         double tot = totalWithStack > 0 ? totalWithStack : 1;
         var sb = new StringBuilder();
-        sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name).AppendLine(WindowSuffix(startMs, endMs));
+        sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name).Append(stacks.Suffix).AppendLine(WindowSuffix(startMs, endMs));
         sb.Append("matchedFunctions: ").Append(target.Count).AppendLine();
         foreach (var f in target.OrderBy(f => f).Take(10))
         {
@@ -680,27 +656,15 @@ internal static partial class UltraTools
         var entry = ResolveProfile(path);
         var thread = ResolveThread(entry, threadIndex);
         var meta = entry.Profile.Meta;
-        var samples = thread.Samples;
         var stackTable = thread.StackTable;
         var frameTable = thread.FrameTable;
-        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
+        var stacks = AggregateStacks(thread, startMs, endMs);
 
-        var byModule = new Dictionary<string, int>();
-        var byCategory = new Dictionary<int, int>();
-        int total = 0;
-        for (int i = 0; i < samples.Stack.Count; i++)
+        var byModule = new Dictionary<string, long>();
+        var byCategory = new Dictionary<int, long>();
+        long total = stacks.Total;
+        foreach (var (si, w) in stacks.ByStack)
         {
-            if (samples.Stack[i] is not int si || si < 0 || si >= stackTable.Frame.Count)
-            {
-                continue;
-            }
-
-            if (times != null && !InWindow(times[i], startMs, endMs))
-            {
-                continue;
-            }
-
-            total++;
             int frame = stackTable.Frame[si];
             int func = frameTable.Func[frame];
             string mod = ModuleName(thread, func);
@@ -709,15 +673,15 @@ internal static partial class UltraTools
                 mod = UnsymbolizedModule;
             }
 
-            byModule[mod] = byModule.GetValueOrDefault(mod) + 1;
+            byModule[mod] = byModule.GetValueOrDefault(mod) + w;
             int c = frameTable.Category[frame] ?? -1;
-            byCategory[c] = byCategory.GetValueOrDefault(c) + 1;
+            byCategory[c] = byCategory.GetValueOrDefault(c) + w;
         }
 
         double tot = total > 0 ? total : 1;
         var sb = new StringBuilder();
         sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name)
-          .Append("  selfSamples=").Append(total).AppendLine(WindowSuffix(startMs, endMs));
+          .Append("  selfSamples=").Append(total).Append(stacks.Suffix).AppendLine(WindowSuffix(startMs, endMs));
         sb.AppendLine("by module (self samples):");
         foreach (var kv in byModule.OrderByDescending(kv => kv.Value).Take(take))
         {
@@ -747,9 +711,9 @@ internal static partial class UltraTools
 
     private sealed class TreeAgg
     {
-        public int Incl;
+        public long Incl;
 
-        public int Self;
+        public long Self;
 
         public Dictionary<int, TreeAgg> Children = new();
     }

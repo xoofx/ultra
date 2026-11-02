@@ -137,7 +137,7 @@ top retainers (MB of the objects on the shortest paths from a root through the t
 
 The events of the snapshot go through an EventPipe buffer in the process, sized by default like the private memory of the process (the events are about the size of the GC heap), at least 256 MB and at most half the free memory of the machine. When events are lost anyway (the runtime writes them faster than ultra reads them), the log next to the profile and `ultra report` say how many and what is missing: the roots by kind, the object and reference blocks. A missing reference block is replaced by unknown references so that the references after it stay with their objects.
 
-The snapshot is written to `..._pid_<pid>_heap.nettrace` and deleted after the conversion unless `--keep-intermediate-etl-files` is passed; `ultra convert` takes it with the other trace files. Only the GC heap is in the snapshot, not the native memory of the process. The MCP call tree tools count the samples of a track, not their weights: for the heap tracks use the report or the Firefox Profiler.
+The snapshot is written to `..._pid_<pid>_heap.nettrace` and deleted after the conversion unless `--keep-intermediate-etl-files` is passed; `ultra convert` takes it with the other trace files. Only the GC heap is in the snapshot, not the native memory of the process. The MCP aggregation tools (`call_tree`, `top_functions`, `find_hotspots`...) sum the weights of a weighted track, so on the heap tracks they count bytes or objects (their header says `weightType=bytes`).
 
 ## Ultra Profiler UI
 
