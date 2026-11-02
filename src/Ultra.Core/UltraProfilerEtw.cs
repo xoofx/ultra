@@ -20,6 +20,32 @@ internal sealed class UltraProfilerEtw : UltraProfiler
     private TraceEventSession? _kernelSession;
 
     /// <summary>
+    /// The keywords of the CLR provider: the JIT and loader events that resolve the managed frames of the CPU samples, and the
+    /// exception, GC (allocation ticks included, so at the verbose level) and interop events that become markers.
+    /// </summary>
+    /// <remarks>
+    /// Without <see cref="ClrTraceEventParser.Keywords.Stack"/>: the runtime would walk the managed stack of every CLR event
+    /// (ClrStackWalk), and the converter only uses the stacks of the CPU samples. With an app that writes many CLR events (a WinUI
+    /// app reports memory pressure for each WinRT object reference) the profiled app ran up to 80% slower (#32).
+    /// </remarks>
+    internal const ClrTraceEventParser.Keywords ClrKeywords =
+        ClrTraceEventParser.Keywords.JITSymbols |
+        ClrTraceEventParser.Keywords.Exception |
+        ClrTraceEventParser.Keywords.GC |
+        ClrTraceEventParser.Keywords.GCHeapAndTypeNames |
+        ClrTraceEventParser.Keywords.Interop |
+        ClrTraceEventParser.Keywords.Jit |
+        ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
+        ClrTraceEventParser.Keywords.Loader |
+        ClrTraceEventParser.Keywords.StartEnumeration;
+
+    /// <summary>
+    /// The options of the CLR providers (events and rundown): without an ETW stack per event, which the converter does not use and
+    /// which slows down the profiled process for each CLR event (#32). The process filters are added when the profiling starts.
+    /// </summary>
+    internal static TraceEventProviderOptions CreateClrProviderOptions() => new() { StacksEnabled = false };
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
     /// </summary>
     internal UltraProfilerEtw()
@@ -42,10 +68,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
     private protected override ProfilerRunner CreateRunner(UltraProfilerOptions ultraProfilerOptions, List<Process> processList, string baseName, Process? singleProcess)
     {
-        var options = new TraceEventProviderOptions()
-        {
-            StacksEnabled = true,
-        };
+        var options = CreateClrProviderOptions();
 
         // Hardware counters (--pmc): parsed before anything starts so that a wrong name fails at once
         var hardwareCounters = ultraProfilerOptions.HardwareCounters.Count > 0
@@ -272,22 +295,10 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 _kernelSession.EnableKernelProvider(kernelEvents, kernelStacks);
 
-                var jitEvents = ClrTraceEventParser.Keywords.JITSymbols |
-                                ClrTraceEventParser.Keywords.Exception |
-                                ClrTraceEventParser.Keywords.GC |
-                                ClrTraceEventParser.Keywords.GCHeapAndTypeNames |
-                                ClrTraceEventParser.Keywords.Interop |
-                                ClrTraceEventParser.Keywords.JITSymbols |
-                                ClrTraceEventParser.Keywords.Jit |
-                                ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
-                                ClrTraceEventParser.Keywords.Loader |
-                                ClrTraceEventParser.Keywords.Stack |
-                                ClrTraceEventParser.Keywords.StartEnumeration;
-
                 _userSession.EnableProvider(
                     ClrTraceEventParser.ProviderGuid,
-                    TraceEventLevel.Verbose, // For call stacks.
-                    (ulong)jitEvents, options);
+                    TraceEventLevel.Verbose, // The GC allocation ticks are verbose events
+                    (ulong)ClrKeywords, options);
 
 
                 // Reset the clock to account for the duration of the profiler
