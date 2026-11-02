@@ -62,7 +62,13 @@ re-generated.
 1. `load_profile <path>` (or let any tool load it implicitly; `path` is optional
    on read tools and defaults to the most-recently-used profile).
 2. `get_profile_report path=<file>` — a text overview streamed from the file:
-   CPU per thread and share of the process, top leaf functions. Then
+   CPU per thread and share of the process, top leaf functions, hardware
+   counters, and the GC (collections, pauses, heap) and allocations per thread
+   and type; for a `--heap-snapshot` profile, what holds the memory (bytes per
+   root, top types, top retainers). Weighted tracks (`[counter]` of `--pmc`:
+   events; `[heap]` / `[heap objects]`: bytes / objects, the call tree being
+   the retention paths root -> types) are summed by weight in every
+   aggregation tool, whose header then says `weightType=...`. Then
    `get_profile_summary` — product, interval, CPU count, thread/sample counts.
 3. `list_threads` — hottest threads first.
 4. `call_tree <threadIndex>` — inclusive top-down merged call tree: the primary

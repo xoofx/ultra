@@ -178,9 +178,10 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 
         var threadConverters = new ThreadConverter[threads.Count];
         var mapThreadIndexToConverter = new Dictionary<ThreadIndex, ThreadConverter>(threads.Count);
+        var gcStartEventsByCount = new Dictionary<int, (double, GCEvent)>();
         for (var threadIndex = 0; threadIndex < threads.Count; threadIndex++)
         {
-            var threadConverter = new ThreadConverter(this, threads[threadIndex], threadIndex, _profileThreadIndex + threadIndex);
+            var threadConverter = new ThreadConverter(this, threads[threadIndex], threadIndex, _profileThreadIndex + threadIndex, gcStartEventsByCount);
             threadConverters[threadIndex] = threadConverter;
             mapThreadIndexToConverter.Add(threads[threadIndex].ThreadIndex, threadConverter);
         }
@@ -809,7 +810,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private readonly Dictionary<long, (JitCompileEvent, double)> _jitCompilePendingMethodId;
         private readonly Stack<(double, GCSuspendExecutionEngineEvent)> _gcSuspendEEEvents;
         private readonly Stack<double> _gcRestartEEEvents;
-        private readonly Stack<(double, GCEvent)> _gcStartStopEvents;
+        private readonly Dictionary<int, (double, GCEvent)> _gcStartEventsByCount;
         private readonly Dictionary<CallStackIndex, int> _mapCallStackIndexToFirefox;
         private readonly Dictionary<CodeAddressIndex, int> _mapCodeAddressIndexToFirefox;
         private readonly Dictionary<CodeAddressIndex, int> _mapCodeAddressIndexToMethodIndexFirefox;
@@ -818,7 +819,9 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private FirefoxProfiler.Thread? _profileThread;
         private readonly Dictionary<int, List<(double Time, CallStackIndex CallStackIndex)>> _counterItems = new();
 
-        public ThreadConverter(UltraConverterToFirefoxEtw converter, TraceThread thread, int threadIndex, int profileThreadIndex)
+        // gcStartEventsByCount: the collections started and not ended yet in the process, by GC count; shared by its threads, as a
+        // background GC starts on the thread that triggers it and ends on the background GC thread
+        public ThreadConverter(UltraConverterToFirefoxEtw converter, TraceThread thread, int threadIndex, int profileThreadIndex, Dictionary<int, (double, GCEvent)> gcStartEventsByCount)
         {
             _converter = converter;
             _traceLog = converter._traceLog;
@@ -829,7 +832,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             _jitCompilePendingMethodId = new();
             _gcSuspendEEEvents = new();
             _gcRestartEEEvents = new();
-            _gcStartStopEvents = new();
+            _gcStartEventsByCount = gcStartEventsByCount;
             _mapCallStackIndexToFirefox = new();
             _mapCodeAddressIndexToFirefox = new();
             _mapCodeAddressIndexToMethodIndexFirefox = new();
@@ -1020,11 +1023,12 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                         GCType = gcStart.Type.ToString()
                     };
 
-                    _gcStartStopEvents.Push((evt.TimeStampRelativeMSec, gcEvent));
+                    _gcStartEventsByCount[gcStart.Count] = (evt.TimeStampRelativeMSec, gcEvent);
                 }
-                else if (evt is GCEndTraceData && _gcStartStopEvents.Count > 0)
+                else if (evt is GCEndTraceData gcEnd && _gcStartEventsByCount.Remove(gcEnd.Count, out var gcStartEvent))
                 {
-                    var (gcEventStartTime, gcEvent) = _gcStartStopEvents.Pop();
+                    // On the thread that ends the collection (for a background GC, the background GC thread)
+                    var (gcEventStartTime, gcEvent) = gcStartEvent;
 
                     AddMarker(gcEventStartTime, evt.TimeStampRelativeMSec, CategoryGc, FirefoxProfiler.MarkerPhase.Interval, "GC Event", gcEvent);
                 }
@@ -1196,7 +1200,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 
                 var samples = counterThread.Samples;
                 samples.TimeDeltas = new List<double>();
-                samples.Weight = new List<int>();
+                samples.Weight = new List<long>();
                 samples.WeightType = "samples";
 
                 double previousTime = 0;

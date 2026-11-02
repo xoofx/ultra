@@ -204,9 +204,9 @@ internal class UltraEventProcessor
 
     private void ClrOnGCStop(GCEndTraceData obj)
     {
+        // On the thread that ends the collection (for a background GC, the background GC thread)
+        if (!GetProcessState(obj).PendingGCEventsByCount.Remove(obj.Count, out var gcEvent)) return;
         var threadState = GetThreadSamplingState(obj, (ulong)obj.ThreadID);
-        if (threadState.PendingGCEvents.Count == 0) return;
-        var gcEvent = threadState.PendingGCEvents.Pop();
         gcEvent.Duration = TimeSpan.FromMilliseconds(obj.TimeStampRelativeMSec) - gcEvent.StartTime.Value;
         threadState.Thread.Markers.Add(gcEvent);
     }
@@ -221,7 +221,7 @@ internal class UltraEventProcessor
             Depth = gcStart.Depth,
             GCType = gcStart.Type.ToString()
         };
-        GetThreadSamplingState(gcStart, (ulong)gcStart.ThreadID).PendingGCEvents.Push(gcEvent);
+        GetProcessState(gcStart).PendingGCEventsByCount[gcStart.Count] = gcEvent;
     }
 
     private void ClrOnGCAllocationTick(GCAllocationTickTraceData allocationTick)
@@ -479,12 +479,19 @@ internal class UltraEventProcessor
         private UTraceProcess? _process;
         private UnsafeDictionary<ulong, ThreadSamplerState> _threadSamplingStates = new();
 
+        /// <summary>
+        /// The collections started and not ended yet, by GC count: per process, as a background GC starts on the thread that triggers
+        /// it and ends on the background GC thread.
+        /// </summary>
+        public readonly Dictionary<int, GCTraceMarker> PendingGCEventsByCount = new();
+
         public void SetCurrentProcess(UTraceProcess process)
         {
             if (_process != process)
             {
                 _process = process;
                 _threadSamplingStates.Clear();
+                PendingGCEventsByCount.Clear();
             }
         }
 
@@ -509,8 +516,6 @@ internal class UltraEventProcessor
         private UnsafeList<UCodeAddressIndex> _callStack = new(1024);
         private readonly UTraceThread _thread;
         private TimeSpan _lastSampleTime;
-
-        public UnsafeList<GCTraceMarker> PendingGCEvents = new();
 
         public UnsafeList<GCSuspendExecutionEngineTraceMarker> PendingGCSuspendExecutionEngineTraceMarkers = new();
 

@@ -67,9 +67,25 @@ public abstract class UltraConverterToFirefox : IDisposable
     /// <returns>The converted Firefox profile.</returns>
     public static FirefoxProfiler.Profile Convert(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)
     {
-        traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
-        using var converter = CreateConverter(traceFiles, options);
-        return converter.Convert(processIds);
+        (traceFiles, var heapSnapshots) = SplitHeapSnapshots(traceFiles, processIds);
+        FirefoxProfiler.Profile profile;
+        if (traceFiles.Count == 0 && heapSnapshots.Count > 0)
+        {
+            // Only GC heap snapshots (e.g. the _heap.nettrace copied alone from another machine): a profile with their tracks
+            profile = UltraHeapSnapshotConverter.CreateProfile(heapSnapshots[0].File);
+        }
+        else
+        {
+            traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
+            using var converter = CreateConverter(traceFiles, options);
+            profile = converter.Convert(processIds);
+        }
+
+        foreach (var (pid, file) in heapSnapshots)
+        {
+            UltraHeapSnapshotConverter.AddTo(profile, file, pid, options);
+        }
+        return profile;
     }
 
     /// <summary>
@@ -81,13 +97,52 @@ public abstract class UltraConverterToFirefox : IDisposable
     /// <returns>The converted Firefox profile of each process, converted one at a time while enumerating.</returns>
     public static IEnumerable<(int ProcessId, FirefoxProfiler.Profile Profile)> ConvertEachProcess(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)
     {
+        (traceFiles, var heapSnapshots) = SplitHeapSnapshots(traceFiles, processIds);
+
         // The ETL files are filtered once for all the processes
-        traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
+        if (traceFiles.Count > 0) traceFiles = PrepareTraceFiles(traceFiles, options, processIds);
         foreach (var processId in processIds)
         {
-            using var converter = CreateConverter(traceFiles, options);
-            yield return (processId, converter.Convert([processId]));
+            FirefoxProfiler.Profile profile;
+            if (traceFiles.Count == 0)
+            {
+                // Only GC heap snapshots: a profile with their tracks, none for a process without a snapshot
+                var snapshotFile = heapSnapshots.FirstOrDefault(x => x.ProcessId == processId).File;
+                if (snapshotFile is null) continue;
+                profile = UltraHeapSnapshotConverter.CreateProfile(snapshotFile);
+            }
+            else
+            {
+                using var converter = CreateConverter(traceFiles, options);
+                profile = converter.Convert([processId]);
+            }
+
+            foreach (var (pid, file) in heapSnapshots.Where(x => x.ProcessId == processId))
+            {
+                UltraHeapSnapshotConverter.AddTo(profile, file, pid, options);
+            }
+            yield return (processId, profile);
         }
+    }
+
+    /// <summary>
+    /// Takes the GC heap snapshot files (<c>..._{pid}_heap.nettrace</c>) out of the trace files: they are added to the profile of
+    /// their process after its conversion. A file without a pid in its name goes to the single process converted.
+    /// </summary>
+    private static (List<UltraProfilerTraceFile> Others, List<(int ProcessId, string File)> Snapshots) SplitHeapSnapshots(List<UltraProfilerTraceFile> traceFiles, List<int> processIds)
+    {
+        var snapshots = new List<(int, string)>();
+        if (!traceFiles.Any(x => x.IsHeapSnapshot)) return (traceFiles, snapshots);
+        foreach (var file in traceFiles.Where(x => x.IsHeapSnapshot))
+        {
+            var pid = UltraHeapSnapshot.GetProcessId(file.FileName) ?? (processIds.Count == 1 ? processIds[0] : (int?)null);
+            if (pid is null || (processIds.Count > 0 && !processIds.Contains(pid.Value)))
+            {
+                throw new ArgumentException($"The GC heap snapshot {file.FileName} is not of a converted process (its pid is the number before {UltraHeapSnapshot.FilePostfix})");
+            }
+            snapshots.Add((pid.Value, file.FileName));
+        }
+        return (traceFiles.Where(x => !x.IsHeapSnapshot).ToList(), snapshots);
     }
 
     private static List<UltraProfilerTraceFile> PrepareTraceFiles(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options, List<int> processIds)

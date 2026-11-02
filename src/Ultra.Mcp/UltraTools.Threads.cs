@@ -59,25 +59,15 @@ Self samples counts a function only when it is the innermost frame actively exec
 
         var stackTable = thread.StackTable;
         var frameTable = thread.FrameTable;
-        var samples = thread.Samples;
-        double[]? times = MaybeSampleTimes(thread, startMs, endMs);
+        var stacks = AggregateStacks(thread, startMs, endMs);
 
-        var counts = new Dictionary<int, int>();
-        int total = 0;
-        for (int i = 0; i < samples.Stack.Count; i++)
+        var counts = new Dictionary<int, long>();
+        long total = stacks.Total;
+        foreach (var (stackIndex, w) in stacks.ByStack)
         {
-            if (samples.Stack[i] is int stackIndex && stackIndex >= 0 && stackIndex < stackTable.Length)
-            {
-                if (times != null && !InWindow(times[i], startMs, endMs))
-                {
-                    continue;
-                }
-
-                int frame = stackTable.Frame[stackIndex];
-                int func = frameTable.Func[frame];
-                counts[func] = counts.GetValueOrDefault(func) + 1;
-                total++;
-            }
+            int frame = stackTable.Frame[stackIndex];
+            int func = frameTable.Func[frame];
+            counts[func] = counts.GetValueOrDefault(func) + w;
         }
 
         var ordered = counts.OrderByDescending(kv => kv.Value).Take(take).ToList();
@@ -86,6 +76,7 @@ Self samples counts a function only when it is the innermost frame actively exec
         sb.Append("thread [").Append(threadIndex).Append("] ").Append(thread.Name)
           .Append("  functions=").Append(counts.Count)
           .Append(" totalSelfSamples=").Append(total)
+          .Append(stacks.Suffix)
           .AppendLine(WindowSuffix(startMs, endMs));
         foreach (var (func, count) in ordered)
         {

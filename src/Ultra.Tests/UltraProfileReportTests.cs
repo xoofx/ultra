@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Ultra.Core;
+using Ultra.Core.Markers;
 using Ultra.Core.Report;
 
 namespace Ultra.Tests;
@@ -69,6 +70,84 @@ public class UltraProfileReportTests
         StringAssert.Contains(text, "counter [cache-misses]: 1 tracks, 2 samples standing for 400 events");
         StringAssert.Contains(text, "300  75.0%  Outer");
         StringAssert.Contains(text, "100  25.0%  Inner");
+        StringAssert.Contains(text, "GC: no GC or allocation events in the profile");
+    }
+
+    /// <summary>
+    /// The GC markers of a worker (allocation ticks) and of a GC thread (suspensions, a blocking gen0 and a background gen2
+    /// collection, a restart without payload, heap stats): the collections, the pauses from a suspension start to the restart end
+    /// after it, the heap and the allocations per thread, type and kind, whatever the culture.
+    /// </summary>
+    [TestMethod]
+    [DataRow("en-US")]
+    [DataRow("fr-FR")]
+    public void ReportSumsGcAndAllocations(string culture)
+    {
+        var previousCulture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+        try
+        {
+            const long MiB = 1024 * 1024;
+            var profile = new FirefoxProfiler.Profile();
+            profile.Meta.Product = "Test";
+            profile.Meta.ProfilingEndTime = 2000;
+            profile.Meta.Categories = [new FirefoxProfiler.Category { Name = "Other", Color = FirefoxProfiler.ProfileColor.Grey, Subcategories = { "Other" } }];
+
+            var worker = MakeThread("0 - worker (10)", "10", samples: [("Inner", 0, 1_000_000)], weights: null);
+            for (int i = 0; i < 3; i++) AddMarker(worker, "0 - GC Alloc (10)", 5 + i, 5 + i, new GCAllocationTickEvent { AllocationAmount = MiB, AllocationKind = "Small", TypeName = "System.Byte[]" });
+            AddMarker(worker, "0 - GC Alloc (10)", 9, 9, new GCAllocationTickEvent { AllocationAmount = MiB, AllocationKind = "Small", TypeName = "System.String" });
+            AddMarker(worker, "0 - GC Alloc (10)", 9.5, 9.5, new GCAllocationTickEvent { AllocationAmount = 5 * MiB, AllocationKind = "Large", TypeName = "System.Double[]" });
+            profile.Threads.Add(worker);
+
+            var gcThread = MakeThread("1 - gc (11)", "11", samples: [("Outer", 0, 1_000_000)], weights: null);
+            AddMarker(gcThread, "GC Suspend EE", 10, 10.5, new GCSuspendExecutionEngineEvent { Reason = "SuspendForGC", Count = 1 });
+            AddMarker(gcThread, "GC Event", 10.5, 12.5, new GCEvent { Reason = "AllocSmall", Count = 1, Depth = 0, GCType = "NonConcurrentGC" });
+            AddMarker(gcThread, "GC Restart EE", 12.5, 13, null);
+            AddMarker(gcThread, "GCHeapStats", 13, 13, new GCHeapStatsEvent { TotalHeapSize = 10 * MiB, GenerationSize0 = MiB, GenerationSize1 = 2 * MiB, GenerationSize2 = 5 * MiB, GenerationSize3 = 2 * MiB });
+            AddMarker(gcThread, "GC Suspend EE", 100, 100.2, new GCSuspendExecutionEngineEvent { Reason = "SuspendForGCPrep", Count = 2 });
+            AddMarker(gcThread, "GC Event", 100.2, 150, new GCEvent { Reason = "Induced", Count = 2, Depth = 2, GCType = "BackgroundGC" });
+            AddMarker(gcThread, "GC Restart EE", 100.4, 100.6, null);
+            AddMarker(gcThread, "GCHeapStats", 150, 150, new GCHeapStatsEvent { TotalHeapSize = 8 * MiB });
+            // a suspension for something else than a GC (e.g. tiered compilation): reported apart
+            AddMarker(gcThread, "GC Suspend EE", 200, 200.1, new GCSuspendExecutionEngineEvent { Reason = "SuspendOther", Count = 3 });
+            AddMarker(gcThread, "GC Restart EE", 200.1, 200.3, null);
+            profile.Threads.Add(gcThread);
+
+            var json = JsonSerializer.SerializeToUtf8Bytes(profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
+            var output = new StringWriter();
+            new UltraProfileReport(top: 5, workers: 2).Run(new MemoryStream(json), output);
+            var text = output.ToString();
+
+            StringAssert.Contains(text, "GC: 2 collections (gen0 1, gen1 0, gen2 1, 1 of them background)");
+            StringAssert.Contains(text, "  reasons: AllocSmall 1, Induced 1");
+            StringAssert.Contains(text, "  GC pauses (managed threads stopped): 2, 3.6 ms = 0.18% of the 2.0 s, longest 3.00 ms, of which 0.7 ms suspending the threads (longest 0.50 ms)");
+            StringAssert.Contains(text, "  other runtime pauses (not for a GC: tiered compilation, debugger...): 1, 0.3 ms, longest 0.30 ms");
+            StringAssert.Contains(text, "  in blocking collections: 2.0 ms (longest 2.00 ms); the background collections ran 49.8 ms beside the program");
+            StringAssert.Contains(text, "  GC heap: largest 10.0 MB after a collection (gen0 1.0, gen1 2.0, gen2 5.0, LOH 2.0, POH 0.0 MB), 8.0 MB after the last one");
+            StringAssert.Contains(text, "allocations: about 9.0 MB = 4.5 MB/s, from 5 allocation ticks (Large 5.0 MB, Small 4.0 MB)");
+            StringAssert.Contains(text, "0 - worker (10)                                     9.0 MB 100.0%         5");
+            StringAssert.Contains(text, "5.0 MB  55.6%         1  System.Double[]");
+            StringAssert.Contains(text, "3.0 MB  33.3%         3  System.Byte[]");
+            StringAssert.Contains(text, "1.0 MB  11.1%         1  System.String");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+        }
+    }
+
+    private static void AddMarker(FirefoxProfiler.Thread thread, string name, double start, double end, FirefoxProfiler.MarkerPayload? payload)
+    {
+        var markers = thread.Markers;
+        thread.StringArray.Add(name);
+        markers.Name.Add(thread.StringArray.Count - 1);
+        markers.StartTime.Add(start);
+        markers.EndTime.Add(end);
+        markers.Phase.Add(start == end ? FirefoxProfiler.MarkerPhase.Instance : FirefoxProfiler.MarkerPhase.Interval);
+        markers.Category.Add(0);
+        markers.ThreadId.Add(0);
+        markers.Data.Add(payload);
+        markers.Length++;
     }
 
     /// <summary>A thread whose samples are leaf-first stacks of (leaf function, code offset) under a root "Main" frame.</summary>
@@ -133,14 +212,14 @@ public class UltraProfileReportTests
         var root = Stack(Frame("Main", 0), null);
         thread.Samples.TimeDeltas = new List<double>();
         thread.Samples.WeightType = "samples";
-        if (weights != null) thread.Samples.Weight = new List<int>();
+        if (weights != null) thread.Samples.Weight = new List<long>();
         else thread.Samples.ThreadCPUDelta = new List<int?>();
         for (int i = 0; i < samples.Length; i++)
         {
             var (leaf, offset, cpuNs) = samples[i];
             thread.Samples.Stack.Add(Stack(Frame(leaf, offset), root));
             thread.Samples.TimeDeltas.Add(1);
-            if (weights != null) thread.Samples.Weight!.Add((int)weights[i]);
+            if (weights != null) thread.Samples.Weight!.Add(weights[i]);
             else thread.Samples.ThreadCPUDelta!.Add((int)cpuNs);
             thread.Samples.Length++;
         }

@@ -346,7 +346,7 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
 
         var samples = profileThread.Samples;
         samples.TimeDeltas = new List<double>();
-        samples.Weight = new List<int>();
+        samples.Weight = new List<long>();
         samples.WeightType = "samples";
 
         double previousSampleTimeInMs = 0;
@@ -361,7 +361,7 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
             var sampleTimeInMs = sample.Timestamp.InMs;
             samples.TimeDeltas.Add(sampleTimeInMs - previousSampleTimeInMs);
             samples.Stack.Add(firefoxCallStackIndex);
-            samples.Weight.Add((int)Math.Min(sample.Count, int.MaxValue));
+            samples.Weight.Add((long)sample.Count);
             samples.Length++;
             previousSampleTimeInMs = sampleTimeInMs;
         }

@@ -13,9 +13,10 @@ namespace Ultra.Core.Report;
 
 /// <summary>
 /// A text report of a Firefox profile written by ultra, without loading it whole: the CPU time per thread and its share, the top
-/// leaf functions over all threads, the hot code offsets of the top functions, and the events of each hardware counter track per
-/// function. The <c>[counter]</c> tracks of <c>--pmc</c> are reported apart from the CPU threads (a sum over all threads would count
-/// them as CPU).
+/// leaf functions over all threads, the hot code offsets of the top functions, the events of each hardware counter track per
+/// function, and the .NET GC: the collections and runtime suspensions, the GC heap, and the sampled allocations per thread and
+/// type (from the GC markers of the threads). The <c>[counter]</c> tracks of <c>--pmc</c> are reported apart from the CPU threads
+/// (a sum over all threads would count them as CPU).
 /// </summary>
 /// <remarks>
 /// The profile is streamed thread by thread: one thread inflates the gzip and cuts the JSON into complete thread objects, workers
@@ -166,6 +167,9 @@ public sealed partial class UltraProfileReport
                 Line($"  {c,16:N0} {(events > 0 ? c * 100.0 / events : 0),5:F1}%  {leaf}");
             }
         }
+
+        PrintGc(meta, GcTally.Merge(tallies.Select(t => t.Gc)), o);
+        PrintHeap(HeapTally.Merge(tallies.Select(t => t.Heap)), o);
     }
 
     private static Dictionary<TKey, long> Merge<TKey>(IEnumerable<Dictionary<TKey, long>> parts) where TKey : notnull
@@ -350,15 +354,16 @@ public sealed partial class UltraProfileReport
     /// <summary>
     /// Parses one thread object with Utf8JsonReader into pooled arrays (any property order) and tallies it.
     /// </summary>
-    private static class ThreadParser
+    private static partial class ThreadParser
     {
         public static void Parse(ReadOnlySpan<byte> json, Tally tally)
         {
             string name = "";
             string[]? strings = null;
-            int[]? frameFunc = null, frameAddress = null, stackFrame = null, funcName = null, sampleStack = null;
+            int[]? frameFunc = null, frameAddress = null, stackFrame = null, stackPrefix = null, funcName = null, sampleStack = null;
             long[]? weight = null, cpuDelta = null;
-            int frameCount = 0, stackCount = 0, funcCount = 0, sampleCount = 0, weightCount = 0, cpuDeltaCount = 0;
+            int frameCount = 0, stackCount = 0, stackPrefixCount = 0, funcCount = 0, sampleCount = 0, weightCount = 0, cpuDeltaCount = 0;
+            GcMarkers? markers = null;
 
             var reader = new Utf8JsonReader(json, true, default);
             reader.Read(); // {
@@ -371,7 +376,19 @@ public sealed partial class UltraProfileReport
                 }
                 else if (reader.ValueTextEquals("stringArray"u8)) strings = ReadStrings(ref reader);
                 else if (reader.ValueTextEquals("frameTable"u8)) ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)));
-                else if (reader.ValueTextEquals("stackTable"u8)) ReadTable(ref reader, ("frame"u8.ToArray(), (a, c) => (stackFrame, stackCount) = (a, c)));
+                else if (reader.ValueTextEquals("stackTable"u8))
+                {
+                    // The prefixes (the paths to the root) are only used for the heap bytes track: the name comes first in the
+                    // files ultra writes, read them anyway when it is not known yet
+                    if (name.Length == 0 || name.EndsWith($"[{UltraHeapSnapshotConverter.BytesCounter}]", StringComparison.Ordinal))
+                    {
+                        ReadTable(ref reader, ("frame"u8.ToArray(), (a, c) => (stackFrame, stackCount) = (a, c)), ("prefix"u8.ToArray(), (a, c) => (stackPrefix, stackPrefixCount) = (a, c)));
+                    }
+                    else
+                    {
+                        ReadTable(ref reader, ("frame"u8.ToArray(), (a, c) => (stackFrame, stackCount) = (a, c)));
+                    }
+                }
                 else if (reader.ValueTextEquals("funcTable"u8)) ReadTable(ref reader, ("name"u8.ToArray(), (a, c) => (funcName, funcCount) = (a, c)));
                 else if (reader.ValueTextEquals("samples"u8))
                 {
@@ -384,16 +401,19 @@ public sealed partial class UltraProfileReport
                         else Skip(ref reader);
                     }
                 }
+                else if (reader.ValueTextEquals("markers"u8)) markers = ReadMarkers(ref reader);
                 else Skip(ref reader);
             }
 
             try
             {
-                tally.Add(name, strings ?? [], frameFunc, frameAddress, frameCount, stackFrame, stackCount, funcName, funcCount, sampleStack, sampleCount, weight, weightCount, cpuDelta, cpuDeltaCount);
+                if (markers != null) tally.AddMarkers(name, strings ?? [], markers);
+                tally.Add(name, strings ?? [], frameFunc, frameAddress, frameCount, stackFrame, stackCount, stackPrefix, stackPrefixCount, funcName, funcCount, sampleStack, sampleCount, weight, weightCount, cpuDelta, cpuDeltaCount);
             }
             finally
             {
-                Return(frameFunc); Return(frameAddress); Return(stackFrame); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
+                Return(frameFunc); Return(frameAddress); Return(stackFrame); Return(stackPrefix); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
+                if (markers != null) { Return(markers.Name); Return(markers.Start); Return(markers.End); }
             }
         }
 
@@ -485,13 +505,44 @@ public sealed partial class UltraProfileReport
         public readonly Dictionary<string, Dictionary<int, long>> CpuOffsets = new();
         public readonly Dictionary<string, Dictionary<string, long>> CounterLeaf = new();
         public readonly Dictionary<string, (int Tracks, long Samples, long Events)> Counters = new();
+        public readonly GcTally Gc = new();
+        public readonly HeapTally Heap = new();
         public int Threads;
 
-        public void Add(string name, string[] strings, int[]? frameFunc, int[]? frameAddress, int frameCount, int[]? stackFrame, int stackCount, int[]? funcName, int funcCount,
+        /// <summary>The GC markers of a thread (none on the counter tracks); its allocations only when it passes the thread filter.</summary>
+        public void AddMarkers(string name, string[] strings, GcMarkers markers)
+        {
+            if (CounterSuffix().Match(name) is { Success: true } counter)
+            {
+                // The heap bytes track carries the summary of its snapshot (what was lost while it was taken)
+                if (counter.Groups[1].Value == UltraHeapSnapshotConverter.BytesCounter)
+                {
+                    foreach (var marker in markers.Data)
+                    {
+                        if (marker is { Kind: GcMarkerKind.HeapSnapshot, Counts: { } counts }) Heap.AddSummary(counts);
+                    }
+                }
+                return;
+            }
+            Gc.Add(name, strings, markers, threadFilter == null || name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public void Add(string name, string[] strings, int[]? frameFunc, int[]? frameAddress, int frameCount, int[]? stackFrame, int stackCount, int[]? stackPrefix, int stackPrefixCount, int[]? funcName, int funcCount,
             int[]? sampleStack, int sampleCount, long[]? weight, int weightCount, long[]? cpuDelta, int cpuDeltaCount)
         {
             Threads++;
             var counter = CounterSuffix().Match(name) is { Success: true } m ? m.Groups[1].Value : null;
+
+            // The GC heap snapshot tracks: for the whole process, so not filtered
+            if (counter is UltraHeapSnapshotConverter.BytesCounter or UltraHeapSnapshotConverter.ObjectsCounter)
+            {
+                if (sampleStack != null && stackFrame != null && frameFunc != null && funcName != null)
+                {
+                    Heap.Add(counter == UltraHeapSnapshotConverter.BytesCounter, strings, frameFunc, stackFrame, stackPrefix, stackPrefixCount, funcName, sampleStack, sampleCount, weight, weightCount);
+                }
+                return;
+            }
+
             if (threadFilter != null && !name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase)) sampleCount = 0;
             if (sampleCount == 0 || sampleStack == null || stackFrame == null || frameFunc == null || funcName == null)
             {

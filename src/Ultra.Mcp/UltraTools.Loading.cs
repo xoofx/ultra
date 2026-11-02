@@ -45,7 +45,7 @@ internal static partial class UltraTools
 
         return string.Join("\n", entries
             .OrderByDescending(e => e.LastAccessedUtc)
-            .Select(e => $"{e.Path}\tfileSize={e.FileSize:n0}\tlastAccessed={e.LastAccessedUtc:o}"));
+            .Select(e => $"{e.Path}\tfileSize={e.FileSize:n0}\testimatedMemory={e.EstimatedBytes:n0}\tlastAccessed={e.LastAccessedUtc:o}"));
     });
 
     [McpServerTool(Name = "get_profile_summary", ReadOnly = true, Idempotent = true)]
@@ -68,6 +68,7 @@ internal static partial class UltraTools
         var sb = new StringBuilder();
         sb.Append("path: ").AppendLine(entry.Path);
         sb.Append("fileSize: ").Append(entry.FileSize.ToString("n0")).AppendLine(" bytes");
+        sb.Append("estimatedMemory: ").Append(entry.EstimatedBytes.ToString("n0")).AppendLine(" bytes (the loaded tables, the cache budget counts this)");
         sb.Append("product: ").AppendLine(meta.Product);
         sb.Append("intervalMs: ").AppendLine(meta.Interval.ToString("0.####"));
         sb.Append("profilingStartMs: ").AppendLine((meta.ProfilingStartTime ?? 0).ToString("0.###"));
