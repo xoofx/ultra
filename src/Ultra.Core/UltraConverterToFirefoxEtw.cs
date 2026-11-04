@@ -191,10 +191,26 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         // Thread IDs can be reused during a trace. TraceThread carries the timestamped
         // lifetime; ThreadID alone can merge unrelated lifetimes into one Firefox thread.
         // Thread names come from the events of this process only (a ThreadID of another process can be the same number).
+        // A context switch belongs to the process of the thread switched in: the switch-outs of the threads of this process (to
+        // another process, or to idle) are read from all the events of the process lifetime, for the CPU time of the threads.
         Options.LogProgress?.Invoke($"Reading Events for {threads.Count} Threads");
         var threadSetNames = new Dictionary<int, string>();
-        foreach (var evt in process.EventsInProcess)
+        var convertersByThreadId = threadConverters.ToLookup(x => x.ThreadId);
+        foreach (var evt in _traceLog.Events.FilterByTime(process.StartTimeRelativeMsec, process.EndTimeRelativeMsec))
         {
+            if (evt.Opcode == (TraceEventOpcode) 0x24 && evt is CSwitchTraceData switchOut && switchOut.OldThreadID != evt.ThreadID && convertersByThreadId.Contains(switchOut.OldThreadID))
+            {
+                foreach (var oldThreadConverter in convertersByThreadId[switchOut.OldThreadID])
+                {
+                    oldThreadConverter.ReadSwitchOut(evt.TimeStampRelativeMSec);
+                }
+            }
+
+            if (evt.ProcessID != process.ProcessID)
+            {
+                continue;
+            }
+
             if (evt is ThreadSetNameTraceData threadSetName)
             {
                 if (!string.IsNullOrEmpty(threadSetName.ThreadName))
@@ -775,6 +791,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
     {
         Sample,
         SwitchIn,
+        SwitchOut,
         Marker,
     }
 
@@ -811,6 +828,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private readonly Stack<(double, GCSuspendExecutionEngineEvent)> _gcSuspendEEEvents;
         private readonly Stack<double> _gcRestartEEEvents;
         private readonly Dictionary<int, (double, GCEvent)> _gcStartEventsByCount;
+        private (double StartTime, LockContentionEvent Event)? _pendingContention;
         private readonly Dictionary<CallStackIndex, int> _mapCallStackIndexToFirefox;
         private readonly Dictionary<CodeAddressIndex, int> _mapCodeAddressIndexToFirefox;
         private readonly Dictionary<CodeAddressIndex, int> _mapCodeAddressIndexToMethodIndexFirefox;
@@ -845,6 +863,23 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         /// The converted Firefox thread, available after <see cref="Convert"/>.
         /// </summary>
         public FirefoxProfiler.Thread ProfileThread => _profileThread!;
+
+        /// <summary>
+        /// The OS id of the thread.
+        /// </summary>
+        public int ThreadId => _thread.ThreadID;
+
+        /// <summary>
+        /// Reads a switch-out of the thread (the context switch event of the thread switched in, which can be of another process).
+        /// Must be passed in trace order with the events of <see cref="ReadEvent"/>.
+        /// </summary>
+        public void ReadSwitchOut(double timeStamp)
+        {
+            if (timeStamp >= _thread.StartTimeRelativeMSec && timeStamp <= _thread.EndTimeRelativeMSec)
+            {
+                _items.Add(new ThreadItem(ThreadItemKind.SwitchOut, timeStamp, CallStackIndex.Invalid, null));
+            }
+        }
 
         /// <summary>
         /// The GC heap stats events of this thread, in event order.
@@ -1011,6 +1046,27 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
 
                 AddMarker(evt.TimeStampRelativeMSec, evt.TimeStampRelativeMSec, CategoryGc, FirefoxProfiler.MarkerPhase.Instance, $"{_threadIndex} - GC Alloc ({_thread.ThreadID})", allocationTickEvent);
             }
+            else if (evt is ContentionStartTraceData contentionStart)
+            {
+                // --locks: the wait starts on this thread; its stack (the one CLR event with a stack) is where it waits
+                _pendingContention = (evt.TimeStampRelativeMSec, new LockContentionEvent
+                {
+                    Kind = contentionStart.ContentionFlags.ToString(),
+                    LockId = contentionStart.LockID,
+                    ObjectId = contentionStart.AssociatedObjectID,
+                    OwnerThreadId = contentionStart.LockOwnerThreadID,
+                    PendingCallStack = (int)evt.CallStackIndex(),
+                });
+            }
+            else if (evt is ContentionStopTraceData contentionStop)
+            {
+                if (_pendingContention is var (startTime, contention))
+                {
+                    _pendingContention = null;
+                    contention.DurationMs = contentionStop.DurationNs > 0 ? contentionStop.DurationNs / 1_000_000.0 : evt.TimeStampRelativeMSec - startTime;
+                    AddMarker(startTime, evt.TimeStampRelativeMSec, CategoryClr, FirefoxProfiler.MarkerPhase.Interval, LockContentionEvent.MarkerName, contention);
+                }
+            }
             else if (evt.ProviderGuid == ClrTraceEventParser.ProviderGuid)
             {
                 if (evt is GCStartTraceData gcStart)
@@ -1098,18 +1154,40 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             samples.TimeDeltas = new List<double>();
             samples.WeightType = "samples";
 
+            // The CPU time of a sample: the time the thread ran since the previous sample, summed over its run slices (switch-in to
+            // switch-out). Counting only from the last switch-in lost the time a thread ran before it was preempted.
             double startTime = 0;
-            double switchTimeInMsec = 0.0;
+            double? runningSince = null;
+            double ranMsec = 0.0;
             foreach (var item in _items)
             {
                 switch (item.Kind)
                 {
                     case ThreadItemKind.SwitchIn:
-                        switchTimeInMsec = item.Time;
+                        runningSince = item.Time;
+                        break;
+
+                    case ThreadItemKind.SwitchOut:
+                        if (runningSince is { } switchedIn)
+                        {
+                            ranMsec += item.Time - switchedIn;
+                            runningSince = null;
+                        }
                         break;
 
                     case ThreadItemKind.Marker:
                         var marker = item.Marker!;
+                        // The stack of a lock contention, in the tables of this thread (the stack where it waited)
+                        if (marker.Data is LockContentionEvent { PendingCallStack: >= 0 } contention)
+                        {
+                            var callStackIndex = (CallStackIndex)contention.PendingCallStack;
+                            if (_traceLog.CallStacks.ThreadIndex(callStackIndex) == thread.ThreadIndex)
+                            {
+                                contention.CauseStack = ConvertCallStack(callStackIndex);
+                            }
+                            contention.PendingCallStack = -1;
+                        }
+
                         markers.StartTime.Add(marker.StartTime);
                         markers.EndTime.Add(marker.EndTime);
                         markers.Category.Add(marker.Category);
@@ -1132,17 +1210,13 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                         var deltaTime = item.Time - startTime;
                         samples.TimeDeltas.Add(deltaTime);
                         samples.Stack.Add(firefoxCallStackIndex);
-                        var cpuDeltaMs = (long) ((item.Time - switchTimeInMsec) * 1_000_000.0);
-                        if (cpuDeltaMs > 0)
-                        {
-                            samples.ThreadCPUDelta.Add((int) cpuDeltaMs);
-                        }
-                        else
-                        {
-                            samples.ThreadCPUDelta.Add(0);
-                        }
+                        // Running since a switch-in not in the trace (the first sample of the thread): nothing counted before it
+                        var cpuDeltaNs = (ranMsec + (runningSince is { } since ? item.Time - since : 0.0)) * 1_000_000.0;
+                        samples.ThreadCPUDelta.Add(cpuDeltaNs > 0 ? (int) Math.Min(cpuDeltaNs, int.MaxValue) : 0);
 
-                        switchTimeInMsec = item.Time;
+                        // The thread is running at the sample
+                        ranMsec = 0.0;
+                        runningSince = item.Time;
                         samples.Length++;
                         startTime = item.Time;
                         break;
@@ -1599,6 +1673,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                     GCAllocationTickEvent.Schema(),
                     GCSuspendExecutionEngineEvent.Schema(),
                     GCRestartExecutionEngineEvent.Schema(),
+                    LockContentionEvent.Schema(),
                 }
             }
         };

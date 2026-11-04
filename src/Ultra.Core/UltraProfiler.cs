@@ -470,6 +470,13 @@ public abstract class UltraProfiler : IDisposable
 
         await runner.OnEnablingProfiling();
 
+        if (ultraProfilerOptions.LockContention)
+        {
+            ultraProfilerOptions.LogProgress?.Invoke(OperatingSystem.IsWindows()
+                ? "Lock contention events enabled (--locks), with the stack of each wait"
+                : "Lock contention events enabled (--locks), without the stacks of the waits (not recorded on Linux and macOS)");
+        }
+
         // Reset the clock to account for the duration of the profiler
         ProfilerClock.Restart();
     }

@@ -51,7 +51,7 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
             OnProcessStarted = (process) =>
             {
                 launchedProcess = process;
-                profilerState = new UltraSamplerProfilerState(baseName, process.Id, CancellationToken);
+                profilerState = new UltraSamplerProfilerState(baseName, process.Id, CancellationToken, ultraProfilerOptions.LockContention);
                 return Task.CompletedTask;
             },
 
@@ -163,11 +163,11 @@ internal sealed class UltraProfilerEventPipe : UltraProfiler
         private readonly DiagnosticPortSession _samplerSession;
         private readonly DiagnosticPortSession _clrSession;
 
-        public UltraSamplerProfilerState(string baseName, int pid, CancellationToken token)
+        public UltraSamplerProfilerState(string baseName, int pid, CancellationToken token, bool lockContention)
         {
             _token = token;
             _samplerSession = new(pid, true, baseName, token);
-            _clrSession = new(pid, false, baseName, token);
+            _clrSession = new(pid, false, baseName, token, lockContention);
         }
 
         public List<UltraProfilerTraceFile> GetGeneratedTraceFiles()

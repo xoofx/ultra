@@ -12,7 +12,7 @@ namespace Ultra.Mcp;
 internal static partial class UltraTools
 {
     [McpServerTool(Name = "get_profile_report", ReadOnly = true, Idempotent = true)]
-    [Description(@"Returns the text report of an ultra profile file (.json.gz or .json), the same as `ultra report`: the CPU time of each thread and its share of the process, the top leaf functions over all threads, the hardware counters per function when the profile has some, and for a .NET process the GC (collections per generation and reason, GC pauses, heap) and the allocations per thread and type (sampled about every 100 KB). It streams the file without loading it in memory: a good first look at a profile of any size, before load_profile and the drill-down tools.")]
+    [Description(@"Returns the text report of an ultra profile file (.json.gz or .json), the same as `ultra report`: the CPU time of each thread and its share of the process, the top leaf functions over all threads, the hardware counters per function when the profile has some, and for a .NET process the GC (collections per generation and reason, GC pauses, heap) and the allocations per thread and type (sampled about every 100 KB), the lock contention of a --locks profile (waits per thread, waiting code, owners). It streams the file without loading it in memory: a good first look at a profile of any size, before load_profile and the drill-down tools.")]
     public static async Task<string> GetProfileReport(
         [Description("Absolute path to a profile .json.gz or .json file.")] string path,
         [Description("How many threads and functions to list. Default 12.")] int top = 12,

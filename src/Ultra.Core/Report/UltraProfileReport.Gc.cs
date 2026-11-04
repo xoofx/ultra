@@ -29,13 +29,18 @@ public sealed partial class UltraProfileReport
         Allocation,
         HeapStats,
         HeapSnapshot,
+        LockContention,
     }
 
     /// <summary>The payload fields of a GC marker that the report uses.</summary>
-    private sealed record GcMarker(GcMarkerKind Kind, string? Reason = null, string? GcType = null, int Depth = 0, string? TypeName = null, string? AllocationKind = null, long Amount = 0, long[]? Generations = null, long[]? Counts = null);
+    private sealed record GcMarker(GcMarkerKind Kind, string? Reason = null, string? GcType = null, int Depth = 0, string? TypeName = null, string? AllocationKind = null, long Amount = 0, long[]? Generations = null, long[]? Counts = null, double DurationMs = 0, long Owner = 0, string? LockId = null, int Stack = -1);
 
     /// <summary>The markers of a thread: the GC payloads (null for the others), the names and the times; the arrays are pooled.</summary>
-    private sealed record GcMarkers(List<GcMarker?> Data, int[]? Name, int NameCount, double[]? Start, int StartCount, double[]? End, int EndCount);
+    private sealed record GcMarkers(List<GcMarker?> Data, int[]? Name, int NameCount, double[]? Start, int StartCount, double[]? End, int EndCount)
+    {
+        /// <summary>Whether the thread has lock waits (--locks): its stack prefixes are then read to find the waiting code.</summary>
+        public bool HasLockContention => Data.Exists(x => x?.Kind == GcMarkerKind.LockContention);
+    }
 
     private static partial class ThreadParser
     {
@@ -84,6 +89,10 @@ public sealed partial class UltraProfileReport
             int depth = 0;
             Span<long> generations = stackalloc long[5];
             Span<long> counts = stackalloc long[6];   // the heap snapshot summary
+            double durationMs = 0;
+            long owner = 0;
+            string? lockId = null;
+            int causeStack = -1;
             while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
             {
                 if (reader.ValueTextEquals("type"u8)) type = ReadString(ref reader);
@@ -105,6 +114,10 @@ public sealed partial class UltraProfileReport
                 else if (reader.ValueTextEquals("objectBlocksLost"u8)) counts[3] = ReadLong(ref reader);
                 else if (reader.ValueTextEquals("referenceBlocksLost"u8)) counts[4] = ReadLong(ref reader);
                 else if (reader.ValueTextEquals("unknownReferences"u8)) counts[5] = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("durationMs"u8)) durationMs = ReadDouble(ref reader);
+                else if (reader.ValueTextEquals("ownerThreadId"u8)) owner = ReadLong(ref reader);
+                else if (reader.ValueTextEquals("lockId"u8)) lockId = ReadString(ref reader);
+                else if (reader.ValueTextEquals("cause"u8)) causeStack = ReadCauseStack(ref reader);
                 else Skip(ref reader);
             }
 
@@ -116,6 +129,7 @@ public sealed partial class UltraProfileReport
                 GCAllocationTickEvent.TypeId => new GcMarker(GcMarkerKind.Allocation, TypeName: typeName, AllocationKind: allocationKind, Amount: amount),
                 GCHeapStatsEvent.TypeId => new GcMarker(GcMarkerKind.HeapStats, Amount: totalHeapSize, Generations: generations.ToArray()),
                 HeapSnapshotEvent.TypeId => new GcMarker(GcMarkerKind.HeapSnapshot, Counts: counts.ToArray()),
+                LockContentionEvent.TypeId => new GcMarker(GcMarkerKind.LockContention, DurationMs: durationMs, Owner: owner, LockId: lockId, Stack: causeStack),
                 _ => null,
             };
         }
@@ -124,6 +138,31 @@ public sealed partial class UltraProfileReport
         {
             reader.Read();
             return reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
+        }
+
+        private static double ReadDouble(ref Utf8JsonReader reader)
+        {
+            reader.Read();
+            return reader.TokenType == JsonTokenType.Number ? reader.GetDouble() : 0;
+        }
+
+        /// <summary>The stack of a marker's "cause" object (its "stack" index), -1 when none.</summary>
+        private static int ReadCauseStack(ref Utf8JsonReader reader)
+        {
+            reader.Read();
+            if (reader.TokenType != JsonTokenType.StartObject)
+            {
+                reader.TrySkip();
+                return -1;
+            }
+
+            int stack = -1;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                if (reader.ValueTextEquals("stack"u8)) stack = (int)ReadLong(ref reader);
+                else Skip(ref reader);
+            }
+            return stack;
         }
 
         private static long ReadLong(ref Utf8JsonReader reader)

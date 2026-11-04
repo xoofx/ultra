@@ -146,6 +146,13 @@ public class UltraProfilerOptions
     public bool FastFilter { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the lock contention of the .NET processes is recorded (<c>--locks</c>): the runtime's
+    /// contention events (a thread waiting for a <c>lock</c>, a <c>Monitor</c> or a <c>System.Threading.Lock</c> held by another),
+    /// each wait a "Lock Contention" marker on the waiting thread, with the lock owner and, on Windows, the stack where it waited.
+    /// </summary>
+    public bool LockContention { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether a GC heap snapshot of each .NET process is taken at the end of the profiling (see
     /// <see cref="UltraHeapSnapshot"/>): the live objects by retention path, as the <c>[heap]</c> and <c>[heap objects]</c> tracks.
     /// It stops the threads of the process for the heap walk.

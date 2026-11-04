@@ -45,6 +45,9 @@ internal sealed class UltraProfilerEtw : UltraProfiler
     /// </summary>
     internal static TraceEventProviderOptions CreateClrProviderOptions() => new() { StacksEnabled = false };
 
+    /// <summary>The event id of the CLR ContentionStart event (a thread starts waiting for a lock), the one event of <c>--locks</c> with a stack.</summary>
+    internal const int ContentionStartEventId = 81;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="UltraProfiler"/> class.
     /// </summary>
@@ -295,10 +298,23 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                 _kernelSession.EnableKernelProvider(kernelEvents, kernelStacks);
 
+                // --locks: the contention events, with the stack of the ContentionStart event only (where the thread waits): they are few
+                // compared to the other CLR events, a stack on all of them slowed the profiled app down (#32)
+                var clrKeywords = ClrKeywords;
+                var clrOptions = options;
+                if (ultraProfilerOptions.LockContention)
+                {
+                    clrKeywords |= ClrTraceEventParser.Keywords.Contention;
+                    clrOptions = CreateClrProviderOptions();
+                    clrOptions.ProcessIDFilter = options.ProcessIDFilter;
+                    clrOptions.ProcessNameFilter = options.ProcessNameFilter;
+                    clrOptions.EventIDStacksToEnable = [ContentionStartEventId];
+                }
+
                 _userSession.EnableProvider(
                     ClrTraceEventParser.ProviderGuid,
                     TraceEventLevel.Verbose, // The GC allocation ticks are verbose events
-                    (ulong)ClrKeywords, options);
+                    (ulong)clrKeywords, clrOptions);
 
 
                 // Reset the clock to account for the duration of the profiler

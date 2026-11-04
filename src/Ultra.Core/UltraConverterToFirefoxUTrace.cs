@@ -778,6 +778,24 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
                 markers.Length++;
                 break;
 
+            case LockContentionTraceMarker contention:
+                markers.StartTime.Add(startTimeInMs);
+                markers.EndTime.Add(endTimeInMs);
+                markers.Category.Add(CategoryClr);
+                markers.Phase.Add(FirefoxProfiler.MarkerPhase.Interval);
+                markers.ThreadId.Add(_profileThreadIndex);
+                markers.Name.Add(GetOrCreateString(LockContentionEvent.MarkerName, profileThread));
+                markers.Data.Add(new LockContentionEvent
+                {
+                    DurationMs = contention.DurationMs > 0 ? contention.DurationMs : endTimeInMs - startTimeInMs,
+                    Kind = contention.Kind,
+                    LockId = contention.LockId,
+                    ObjectId = contention.ObjectId,
+                    OwnerThreadId = contention.OwnerThreadId,
+                });
+                markers.Length++;
+                break;
+
             case GCAllocationTickTraceMarker allocationTick:
                 markers.StartTime.Add(startTimeInMs);
                 markers.EndTime.Add(startTimeInMs);
@@ -963,6 +981,7 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
                     GCAllocationTickEvent.Schema(),
                     GCSuspendExecutionEngineEvent.Schema(),
                     GCRestartExecutionEngineEvent.Schema(),
+                    LockContentionEvent.Schema(),
                 }
             }
         };
