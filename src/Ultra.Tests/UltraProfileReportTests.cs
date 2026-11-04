@@ -136,6 +136,86 @@ public class UltraProfileReportTests
         }
     }
 
+    /// <summary>
+    /// Lock waits (--locks) on two threads: the totals, the time per waiting thread, the waiting code (from the stack of the wait, the
+    /// first .NET frame outside the lock code: not the native frames of the event, not Monitor), the lock owners by thread name, and
+    /// a wait without a stack (Linux).
+    /// </summary>
+    [TestMethod]
+    public void ReportSumsLockContention()
+    {
+        var profile = new FirefoxProfiler.Profile();
+        profile.Meta.Product = "Test";
+        profile.Meta.ProfilingEndTime = 2000;
+        profile.Meta.Categories = [new FirefoxProfiler.Category { Name = "Other", Color = FirefoxProfiler.ProfileColor.Grey, Subcategories = { "Other" } }];
+
+        var worker = MakeThread("0 - Worker (10)", "10", samples: [("Inner", 0, 1_000_000)], weights: null);
+        // the stack of a wait, root first: App.Work (.NET) -> TaskAwaiter (.NET, GetAwaiter().GetResult()) -> Task.InternalWait in IL form (.NET)
+        // -> System.Threading.Monitor.Enter (.NET) -> NtTraceEvent (native)
+        var waitStack = AddStack(worker, ("App.Work()", UltraConverterToFirefox.CategoryManaged), ("System.Void System.Runtime.CompilerServices.TaskAwaiter::HandleNonSuccessAndDebuggerNotification(System.Threading.Tasks.Task,System.Threading.Tasks.ConfigureAwaitOptions)", UltraConverterToFirefox.CategoryManaged),
+            ("System.Boolean System.Threading.Tasks.Task::InternalWait(System.Int32,System.Threading.CancellationToken)", UltraConverterToFirefox.CategoryManaged),
+            ("System.Threading.Monitor.Enter(class System.Object)", UltraConverterToFirefox.CategoryManaged), ("NtTraceEvent", UltraConverterToFirefox.CategoryNative));
+        AddMarker(worker, LockContentionEvent.MarkerName, 100, 110, new LockContentionEvent { DurationMs = 10, Kind = "Managed", LockId = 0x1000, OwnerThreadId = 11, CauseStack = waitStack });
+        AddMarker(worker, LockContentionEvent.MarkerName, 200, 230, new LockContentionEvent { DurationMs = 30, Kind = "Managed", LockId = 0x1000, OwnerThreadId = 11, CauseStack = waitStack });
+        profile.Threads.Add(worker);
+
+        var other = MakeThread("1 - Holder (11)", "11", samples: [("Outer", 0, 1_000_000)], weights: null);
+        AddMarker(other, LockContentionEvent.MarkerName, 300, 310, new LockContentionEvent { DurationMs = 10, Kind = "Managed", LockId = 0x2000, OwnerThreadId = 10 });
+        profile.Threads.Add(other);
+
+        var json = JsonSerializer.SerializeToUtf8Bytes(profile, FirefoxProfiler.JsonProfilerContext.Default.Profile);
+        var output = new StringWriter();
+        new UltraProfileReport(top: 5, workers: 2).Run(new MemoryStream(json), output);
+        var text = output.ToString();
+
+        StringAssert.Contains(text, "lock contention: 3 waits, 50.0 ms waiting in total (longest 30.00 ms), on 2 locks");
+        StringAssert.Contains(text, "  0 - Worker (10)                                    40.0  80.0%        2      30.00");
+        StringAssert.Contains(text, "  1 - Holder (11)                                    10.0  20.0%        1      10.00");
+        StringAssert.Contains(text, "        40.0  80.0%        2  App.Work()");
+        StringAssert.Contains(text, "        10.0  20.0%        1  (no stack: not recorded on Linux and macOS)");
+        StringAssert.Contains(text, "        40.0  80.0%        2  1 - Holder (11)");
+        StringAssert.Contains(text, "        10.0  20.0%        1  0 - Worker (10)");
+    }
+
+    /// <summary>Adds a stack (root first) of new frames with their categories to a thread, returns the index of its leaf.</summary>
+    private static int AddStack(FirefoxProfiler.Thread thread, params (string Name, int Category)[] rootToLeaf)
+    {
+        int? prefix = null;
+        foreach (var (name, category) in rootToLeaf)
+        {
+            thread.StringArray.Add(name);
+            var func = thread.FuncTable.Length;
+            thread.FuncTable.Name.Add(thread.StringArray.Count - 1);
+            thread.FuncTable.IsJS.Add(false);
+            thread.FuncTable.RelevantForJS.Add(false);
+            thread.FuncTable.Resource.Add(-1);
+            thread.FuncTable.FileName.Add(null);
+            thread.FuncTable.LineNumber.Add(null);
+            thread.FuncTable.ColumnNumber.Add(null);
+            thread.FuncTable.Length++;
+            var frame = thread.FrameTable.Length;
+            thread.FrameTable.Func.Add(func);
+            thread.FrameTable.Address.Add(-1);
+            thread.FrameTable.InlineDepth.Add(0);
+            thread.FrameTable.Category.Add(category);
+            thread.FrameTable.Subcategory.Add(0);
+            thread.FrameTable.NativeSymbol.Add(null);
+            thread.FrameTable.InnerWindowID.Add(null);
+            thread.FrameTable.Implementation.Add(null);
+            thread.FrameTable.Line.Add(null);
+            thread.FrameTable.Column.Add(null);
+            thread.FrameTable.Length++;
+            var stack = thread.StackTable.Length;
+            thread.StackTable.Frame.Add(frame);
+            thread.StackTable.Prefix.Add(prefix);
+            thread.StackTable.Category.Add(category);
+            thread.StackTable.Subcategory.Add(0);
+            thread.StackTable.Length++;
+            prefix = stack;
+        }
+        return prefix!.Value;
+    }
+
     private static void AddMarker(FirefoxProfiler.Thread thread, string name, double start, double end, FirefoxProfiler.MarkerPayload? payload)
     {
         var markers = thread.Markers;

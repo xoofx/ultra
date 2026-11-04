@@ -108,6 +108,28 @@ $ ultra convert --pid 12594 ultra_my_command_2026-10-30_15_23_46.ultraperf
 - Some listed sources never count on some machines (e.g. `DcacheMisses` and `CacheMisses` on a Zen 5 under Hyper-V): ultra warns when a counter gave no samples. L2, L3 and TLB counters have no source on Windows.
 - The hardware counters need the classic `NT Kernel Logger` session, of which there is one per machine: if another tool (WPR, PerfView, xperf) holds it, ultra warns and stops that session.
 
+## Lock contention
+
+`--locks` records when the threads of a .NET process wait for a lock held by another thread (a `lock` / `Monitor`, or a `System.Threading.Lock`), from the runtime's contention events. Each wait becomes a `Lock Contention` marker on the waiting thread, from the start to the end of the wait, with its duration, the lock and the thread that held it (.NET 8+ for the lock and the owner). On Windows the marker also has the stack where the thread waited, shown by the Firefox Profiler with the marker: it is the only CLR event ultra asks a stack for, contention events are few compared to the others. On Linux and macOS the waits have no stack: EventPipe cannot ask a stack for the contention events only, and a stack walk with every CLR event would slow down the profiled app, so ultra asks for none.
+
+```console
+> ultra profile --locks --duration 30 --pid 12594
+```
+
+`ultra report` sums the waits: per waiting thread (time, waits, longest), per waiting code (the first .NET frame of the wait's stack outside the lock code, Windows only) and per owner, the thread that held the lock:
+
+```console
+lock contention: 2,867 waits, 11,701.5 ms waiting in total (longest 124.44 ms), on 2 locks
+per waiting thread (ms waiting, share, waits, longest ms):
+  1 - Worker (38900)                              2,138.1  18.3%      722      64.22
+  5 - LockUser (68132)                            1,732.0  14.8%       16     111.41
+waiting in (ms, share, waits): the first frame of the wait's stack outside the lock code
+     8,551.1  73.1%    2,833  Contention.WorkerLoop(class System.Object,value class System.DateTime,int64&)
+     3,150.1  26.9%       31  Contention.LockUser(class System.Threading.Lock,value class System.DateTime,int64&)
+held by (ms waited on the locks the thread held, share, waits):
+     8,247.3  70.5%      132  7 - Holder (93912)
+```
+
 ## GC heap snapshot
 
 `--heap-snapshot` shows what is using the memory of a .NET process (.NET Core 3.0+, on Windows and Linux): at the end of the profiling, once the profiling sessions are stopped, ultra takes a GC heap snapshot of each profiled process, as `dotnet-gcdump` does. Through the diagnostic port of the process, the runtime runs one induced, blocking gen2 collection that reports every live object (its type and size), the references between them and the roots. The threads of the process are stopped for the heap walk: well under a second for a few hundred thousand objects, seconds for tens of millions.
@@ -273,6 +295,10 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --duration=VALUE       Run the profiler for a maximum duration (seconds). Default is 120s
       --keep-merged-etl-file Keep the merged ETL file. Without it (and without --nofilter) the ETL files are not merged:
                                 the profile is converted from the unmerged files directly.
+      --locks                Record the lock contention of the .NET processes: each wait of a thread for a `lock` (
+                               Monitor or System.Threading.Lock) held by another thread becomes a `Lock Contention`
+                               marker with its duration and the owner thread, and on Windows the stack where it waited.
+                               `ultra report` sums them per thread, waiting code and owner.
       --heap-snapshot        At the end of the profiling, take a GC heap snapshot of each .NET process (.NET Core 3.0+):
                                 the live objects by retention path, from the roots to their types, as the `[heap]` (
                                bytes) and `[heap objects]` tracks. The threads of the process are stopped during the
@@ -363,7 +389,7 @@ For a .NET process it then prints the GC, from the GC markers of the trace:
 
 With `--thread`, the allocations are those of the matching threads; the GC lines are for the whole process.
 
-For a profile taken with `--heap-snapshot`, it ends with the snapshot: the bytes per root, the top types and the top retainers (see [GC heap snapshot](#gc-heap-snapshot)).
+For a profile taken with `--locks`, it prints the lock contention (see [Lock contention](#lock-contention)). For a profile taken with `--heap-snapshot`, it ends with the snapshot: the bytes per root, the top types and the top retainers (see [GC heap snapshot](#gc-heap-snapshot)).
 
 ```console
 GC: 679 collections (gen0 493, gen1 1, gen2 185, 178 of them background)

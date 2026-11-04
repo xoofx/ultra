@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Etlx;
+using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 
 namespace Ultra.Core;
@@ -128,6 +129,15 @@ internal static class UltraEtwFastFilter
             }
 
             keptCount++;
+
+            // The stack of a lock contention (--locks) is its own: TraceLog writes the event, so it cannot move to another one. By id: the
+            // hook sees the CLR events untyped.
+            if ((int)evt.ID == UltraProfilerEtw.ContentionStartEventId && evt.ProviderGuid == ClrTraceEventParser.ProviderGuid)
+            {
+                dispatch(evt);
+                return;
+            }
+
             DispatchWithoutInlineStack(evt, dispatch);
         });
 

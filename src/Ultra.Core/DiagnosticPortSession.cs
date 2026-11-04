@@ -19,6 +19,7 @@ internal class DiagnosticPortSession
 {
     private readonly int _pid;
     private readonly bool _sampler;
+    private readonly bool _lockContention;
     private readonly string _baseName;
     private readonly Task _connectTask;
     private readonly SemaphoreSlim _semaphoreSlim;
@@ -37,10 +38,12 @@ internal class DiagnosticPortSession
     /// </summary>
     internal static TimeSpan SamplerConnectTimeout = TimeSpan.FromSeconds(5);
 
-    public DiagnosticPortSession(int pid, bool sampler, string baseName, CancellationToken token)
+    // lockContention: also the contention events in the CLR session (--locks)
+    public DiagnosticPortSession(int pid, bool sampler, string baseName, CancellationToken token, bool lockContention = false)
     {
         _pid = pid;
         _sampler = sampler;
+        _lockContention = lockContention;
         _baseName = baseName;
         _cancelConnectSource = new CancellationTokenSource();
         _semaphoreSlim = new SemaphoreSlim(1);
@@ -137,13 +140,24 @@ internal class DiagnosticPortSession
                         ClrTraceEventParser.Keywords.Jit |
                         ClrTraceEventParser.Keywords.JittedMethodILToNativeMap |
                         ClrTraceEventParser.Keywords.Loader |
-                        ClrTraceEventParser.Keywords.Stack |
                         ClrTraceEventParser.Keywords.StartEnumeration
                     );
+
+                    if (_lockContention)
+                    {
+                        keywords |= (long)ClrTraceEventParser.Keywords.Contention;
+                    }
                 }
 
+                // The CLR session asks for no stack per event (nor for the Stack keyword's ClrStackWalk events), as on Windows (#32): the
+                // runtime would walk the managed stack of every CLR event (allocation ticks, GC, JIT, loader...) and nothing reads them,
+                // the CPU samples have their own stacks. Not for --locks either: EventPipe cannot ask a stack for the contention events
+                // only, and the parser does not read the stacks of the CLR events, so the lock waits have no stack on Linux and macOS.
+                // The macOS sampler session keeps them: its events carry their own call stacks, so turning them off there too may
+                // lower the overhead, not tried on a Mac yet (see the macOS remark in readme.md).
+                var requestStackwalk = _sampler;
                 var ultraEventProvider = new EventPipeProvider(providerName, level, (long)keywords);
-                var config = new EventPipeSessionConfiguration([ultraEventProvider], 512, !_sampler, true);
+                var config = new EventPipeSessionConfiguration([ultraEventProvider], 512, !_sampler, requestStackwalk);
                 _eventPipeSession = await _diagnosticsClient!.StartEventPipeSessionAsync(config, token).ConfigureAwait(false);
                 _eventStreamCopyTask = _eventPipeSession.EventStream.CopyToAsync(_nettraceFileStream, token);
             }, token).Unwrap();

@@ -211,7 +211,7 @@ internal sealed class UltraProfilerLinux : UltraProfiler
         WriteProcessSnapshot(pid);
 
         // A non .NET process has no diagnostic port: the session then never connects and is cancelled at stop
-        var session = new DiagnosticPortSession(pid, false, baseName, CancellationToken);
+        var session = new DiagnosticPortSession(pid, false, baseName, CancellationToken, options.LockContention);
         _clrSessions.Add(session);
         await session.StartProfiling(CancellationToken);
     }

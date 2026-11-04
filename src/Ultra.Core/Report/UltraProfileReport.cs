@@ -169,6 +169,7 @@ public sealed partial class UltraProfileReport
         }
 
         PrintGc(meta, GcTally.Merge(tallies.Select(t => t.Gc)), o);
+        PrintLocks(LockTally.Merge(tallies.Select(t => t.Locks)), o);
         PrintHeap(HeapTally.Merge(tallies.Select(t => t.Heap)), o);
     }
 
@@ -360,7 +361,7 @@ public sealed partial class UltraProfileReport
         {
             string name = "";
             string[]? strings = null;
-            int[]? frameFunc = null, frameAddress = null, stackFrame = null, stackPrefix = null, funcName = null, sampleStack = null;
+            int[]? frameFunc = null, frameAddress = null, frameCategory = null, stackFrame = null, stackPrefix = null, funcName = null, sampleStack = null;
             long[]? weight = null, cpuDelta = null;
             int frameCount = 0, stackCount = 0, stackPrefixCount = 0, funcCount = 0, sampleCount = 0, weightCount = 0, cpuDeltaCount = 0;
             GcMarkers? markers = null;
@@ -375,12 +376,24 @@ public sealed partial class UltraProfileReport
                     name = reader.GetString() ?? "";
                 }
                 else if (reader.ValueTextEquals("stringArray"u8)) strings = ReadStrings(ref reader);
-                else if (reader.ValueTextEquals("frameTable"u8)) ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)));
+                else if (reader.ValueTextEquals("frameTable"u8))
+                {
+                    // The categories of the frames (.NET or native) only for the threads with lock waits: the waiting code is the
+                    // first .NET frame of the wait's stack outside the lock code
+                    if (markers?.HasLockContention == true)
+                    {
+                        ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)), ("category"u8.ToArray(), (a, c) => frameCategory = a));
+                    }
+                    else
+                    {
+                        ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)));
+                    }
+                }
                 else if (reader.ValueTextEquals("stackTable"u8))
                 {
                     // The prefixes (the paths to the root) are only used for the heap bytes track: the name comes first in the
                     // files ultra writes, read them anyway when it is not known yet
-                    if (name.Length == 0 || name.EndsWith($"[{UltraHeapSnapshotConverter.BytesCounter}]", StringComparison.Ordinal))
+                    if (name.Length == 0 || name.EndsWith($"[{UltraHeapSnapshotConverter.BytesCounter}]", StringComparison.Ordinal) || markers?.HasLockContention == true)
                     {
                         ReadTable(ref reader, ("frame"u8.ToArray(), (a, c) => (stackFrame, stackCount) = (a, c)), ("prefix"u8.ToArray(), (a, c) => (stackPrefix, stackPrefixCount) = (a, c)));
                     }
@@ -407,12 +420,18 @@ public sealed partial class UltraProfileReport
 
             try
             {
-                if (markers != null) tally.AddMarkers(name, strings ?? [], markers);
+                if (markers != null)
+                {
+                    // The code a lock wait was in: from its stack, the first frame outside the lock code
+                    var stringTable = strings ?? [];
+                    Func<int, string> waitingIn = stack => WaitingIn(stack, stringTable, stackFrame, stackCount, stackPrefix, stackPrefixCount, frameFunc, frameCategory, funcName);
+                    tally.AddMarkers(name, stringTable, markers, waitingIn);
+                }
                 tally.Add(name, strings ?? [], frameFunc, frameAddress, frameCount, stackFrame, stackCount, stackPrefix, stackPrefixCount, funcName, funcCount, sampleStack, sampleCount, weight, weightCount, cpuDelta, cpuDeltaCount);
             }
             finally
             {
-                Return(frameFunc); Return(frameAddress); Return(stackFrame); Return(stackPrefix); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
+                Return(frameFunc); Return(frameAddress); Return(frameCategory); Return(stackFrame); Return(stackPrefix); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
                 if (markers != null) { Return(markers.Name); Return(markers.Start); Return(markers.End); }
             }
         }
@@ -507,10 +526,11 @@ public sealed partial class UltraProfileReport
         public readonly Dictionary<string, (int Tracks, long Samples, long Events)> Counters = new();
         public readonly GcTally Gc = new();
         public readonly HeapTally Heap = new();
+        public readonly LockTally Locks = new();
         public int Threads;
 
         /// <summary>The GC markers of a thread (none on the counter tracks); its allocations only when it passes the thread filter.</summary>
-        public void AddMarkers(string name, string[] strings, GcMarkers markers)
+        public void AddMarkers(string name, string[] strings, GcMarkers markers, Func<int, string> waitingIn)
         {
             if (CounterSuffix().Match(name) is { Success: true } counter)
             {
@@ -524,13 +544,16 @@ public sealed partial class UltraProfileReport
                 }
                 return;
             }
-            Gc.Add(name, strings, markers, threadFilter == null || name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase));
+            var passesFilter = threadFilter == null || name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase);
+            Gc.Add(name, strings, markers, passesFilter);
+            if (passesFilter && markers.HasLockContention) Locks.Add(name, markers, waitingIn);
         }
 
         public void Add(string name, string[] strings, int[]? frameFunc, int[]? frameAddress, int frameCount, int[]? stackFrame, int stackCount, int[]? stackPrefix, int stackPrefixCount, int[]? funcName, int funcCount,
             int[]? sampleStack, int sampleCount, long[]? weight, int weightCount, long[]? cpuDelta, int cpuDeltaCount)
         {
             Threads++;
+            Locks.AddThreadName(name);
             var counter = CounterSuffix().Match(name) is { Success: true } m ? m.Groups[1].Value : null;
 
             // The GC heap snapshot tracks: for the whole process, so not filtered

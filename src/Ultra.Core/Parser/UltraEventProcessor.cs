@@ -106,6 +106,8 @@ internal class UltraEventProcessor
         _clrEventSource.Clr.GCSuspendEEStop += ClrOnGCSuspendEEStop;
         _clrEventSource.Clr.GCRestartEEStart += ClrOnGCRestartEEStart;
         _clrEventSource.Clr.GCRestartEEStop += ClrOnGCRestartEEStop;
+        _clrEventSource.Clr.ContentionStart += ClrOnContentionStart;
+        _clrEventSource.Clr.ContentionStop += ClrOnContentionStop;
 
         // MethodUnload
         _clrEventSource.Clr.MethodUnloadVerbose += ProcessMethodUnloadVerbose;
@@ -179,6 +181,28 @@ internal class UltraEventProcessor
         var gcRestartEEMarker = threadState.PendingGCRestartExecutionEngineTraceMarkers.Pop();
         gcRestartEEMarker.Duration = TimeSpan.FromMilliseconds(gcRestartEE.TimeStampRelativeMSec) - gcRestartEEMarker.StartTime.Value;
         threadState.Thread.Markers.Add(gcRestartEEMarker);
+    }
+
+    private void ClrOnContentionStart(ContentionStartTraceData contentionStart)
+    {
+        GetThreadSamplingState(contentionStart, (ulong)contentionStart.ThreadID).PendingContention = new LockContentionTraceMarker
+        {
+            StartTime = UTimeSpan.FromMilliseconds(contentionStart.TimeStampRelativeMSec),
+            Kind = contentionStart.ContentionFlags.ToString(),
+            LockId = contentionStart.LockID,
+            ObjectId = contentionStart.AssociatedObjectID,
+            OwnerThreadId = contentionStart.LockOwnerThreadID,
+        };
+    }
+
+    private void ClrOnContentionStop(ContentionStopTraceData contentionStop)
+    {
+        var threadState = GetThreadSamplingState(contentionStop, (ulong)contentionStop.ThreadID);
+        if (threadState.PendingContention is not { } contention) return;
+        threadState.PendingContention = null;
+        contention.Duration = TimeSpan.FromMilliseconds(contentionStop.TimeStampRelativeMSec) - contention.StartTime.Value;
+        contention.DurationMs = contentionStop.DurationNs / 1_000_000.0;
+        threadState.Thread.Markers.Add(contention);
     }
 
     private void ClrOnGCSuspendEEStart(GCSuspendEETraceData gcSuspendEE)
@@ -518,6 +542,9 @@ internal class UltraEventProcessor
         private TimeSpan _lastSampleTime;
 
         public UnsafeList<GCSuspendExecutionEngineTraceMarker> PendingGCSuspendExecutionEngineTraceMarkers = new();
+
+        /// <summary>The lock wait (--locks) started on this thread and not ended yet.</summary>
+        public LockContentionTraceMarker? PendingContention;
 
         public UnsafeList<GCRestartExecutionEngineTraceMarker> PendingGCRestartExecutionEngineTraceMarkers = new();
 

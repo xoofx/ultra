@@ -64,7 +64,8 @@ re-generated.
 2. `get_profile_report path=<file>` — a text overview streamed from the file:
    CPU per thread and share of the process, top leaf functions, hardware
    counters, and the GC (collections, pauses, heap) and allocations per thread
-   and type; for a `--heap-snapshot` profile, what holds the memory (bytes per
+   and type; for a `--locks` profile, the lock contention (waits per thread,
+   waiting code, lock owners); for a `--heap-snapshot` profile, what holds the memory (bytes per
    root, top types, top retainers). Weighted tracks (`[counter]` of `--pmc`:
    events; `[heap]` / `[heap objects]`: bytes / objects, the call tree being
    the retention paths root -> types) are summed by weight in every
