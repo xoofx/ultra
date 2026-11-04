@@ -151,10 +151,11 @@ internal class DiagnosticPortSession
 
                 // The CLR session asks for no stack per event (nor for the Stack keyword's ClrStackWalk events), as on Windows (#32): the
                 // runtime would walk the managed stack of every CLR event (allocation ticks, GC, JIT, loader...) and nothing reads them,
-                // the CPU samples have their own stacks. Only --locks asks for them, for the stacks of the lock waits.
+                // the CPU samples have their own stacks. Not for --locks either: EventPipe cannot ask a stack for the contention events
+                // only, and the parser does not read the stacks of the CLR events, so the lock waits have no stack on Linux and macOS.
                 // The macOS sampler session keeps them: its events carry their own call stacks, so turning them off there too may
                 // lower the overhead, not tried on a Mac yet (see the macOS remark in readme.md).
-                var requestStackwalk = _sampler || _lockContention;
+                var requestStackwalk = _sampler;
                 var ultraEventProvider = new EventPipeProvider(providerName, level, (long)keywords);
                 var config = new EventPipeSessionConfiguration([ultraEventProvider], 512, !_sampler, requestStackwalk);
                 _eventPipeSession = await _diagnosticsClient!.StartEventPipeSessionAsync(config, token).ConfigureAwait(false);

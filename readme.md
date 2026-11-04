@@ -89,7 +89,7 @@ Current limitations on macOS:
 - Kernel call stacks are not collected (user-space native and managed call stacks are).
 - Symbols of system libraries living in the dyld shared cache (e.g. `libsystem_pthread.dylib`) are not resolved.
 
-Remark: the EventPipe session of the injected sampler still asks the runtime for a stack walk with each of its events, while the sampler sends its call stacks in its own events. Turning these stack walks off (as done for the CLR events on Windows, Linux and macOS, unless `--locks` is used) may be useful to lower the overhead of profiling on macOS; it has not been tried on a Mac yet.
+Remark: the EventPipe session of the injected sampler still asks the runtime for a stack walk with each of its events, while the sampler sends its call stacks in its own events. Turning these stack walks off (as done for the CLR events on Windows, Linux and macOS) may be useful to lower the overhead of profiling on macOS; it has not been tried on a Mac yet.
 
 ## 🤖 AI agents and automation
 
