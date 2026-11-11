@@ -5,6 +5,7 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Ultra.Core.Elf;
 using Ultra.Core.Linux;
 using Ultra.Core.Model;
@@ -141,6 +142,35 @@ public class UltraPerfLinuxConvertTests
         Assert.AreEqual(0x1000UL, start.Value);
         Assert.IsFalse(methods.TryFindMethodCodeStart(0x2010UL, inner, out _), "another method's code");
         Assert.IsFalse(methods.TryFindMethodCodeStart(0x9000UL, inner, out _));
+    }
+
+    /// <summary>
+    /// Each code version keeps the tier of its load or rundown event (Tier0, OSR, Tier1 are code blocks of their own), a later report
+    /// without a tier (a rundown of the same version) does not erase it, and a report with one fills a version known without.
+    /// </summary>
+    [TestMethod]
+    public void ManagedMethodCodeVersionsKeepTheirTier()
+    {
+        var methods = new UTraceManagedMethodList();
+        methods.GetOrCreateManagedMethod(1, 10, 100, "Work", "Loop", "", 1, default, 0x1000UL, 0x100UL, UTimeSpan.FromMilliseconds(1), OptimizationTier.QuickJitted);
+        methods.GetOrCreateManagedMethod(1, 10, 100, "Work", "Loop", "", 1, default, 0x3000UL, 0x180UL, UTimeSpan.FromMilliseconds(20), OptimizationTier.OptimizedTier1OSR);
+        methods.GetOrCreateManagedMethod(1, 10, 100, "Work", "Loop", "", 1, default, 0x5000UL, 0x200UL, UTimeSpan.FromMilliseconds(50), OptimizationTier.OptimizedTier1);
+        // the rundown at the end reports the Tier1 version again, without a tier; another method only by its rundown, then loaded
+        methods.GetOrCreateManagedMethod(1, 10, 100, "Work", "Loop", "", 1, default, 0x5000UL, 0x200UL, default);
+        methods.GetOrCreateManagedMethod(1, 10, 200, "Work", "Other", "", 2, default, 0x7000UL, 0x100UL, default);
+        methods.GetOrCreateManagedMethod(1, 10, 200, "Work", "Other", "", 2, default, 0x7000UL, 0x100UL, UTimeSpan.FromMilliseconds(60), OptimizationTier.ReadyToRun);
+        methods.SortMethodAddressRanges();
+
+        Assert.IsTrue(methods.TryFindMethodIndexByAddress(0x1010UL, UTimeSpan.FromMilliseconds(5), out var loop));
+        Assert.IsTrue(methods.TryFindMethodCodeStart(0x1010UL, loop, out var start, out var tier));
+        Assert.AreEqual((0x1000UL, OptimizationTier.QuickJitted), (start.Value, tier));
+        Assert.IsTrue(methods.TryFindMethodCodeStart(0x3020UL, loop, out start, out tier));
+        Assert.AreEqual((0x3000UL, OptimizationTier.OptimizedTier1OSR), (start.Value, tier));
+        Assert.IsTrue(methods.TryFindMethodCodeStart(0x5040UL, loop, out start, out tier));
+        Assert.AreEqual((0x5000UL, OptimizationTier.OptimizedTier1), (start.Value, tier), "the rundown without a tier does not erase it");
+        Assert.IsTrue(methods.TryFindMethodIndexByAddress(0x7010UL, UTimeSpan.FromMilliseconds(70), out var other));
+        Assert.IsTrue(methods.TryFindMethodCodeStart(0x7010UL, other, out _, out tier));
+        Assert.AreEqual(OptimizationTier.ReadyToRun, tier, "a load with a tier fills the version known by its rundown");
     }
 
     [TestMethod]

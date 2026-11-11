@@ -509,6 +509,7 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
         subCategory = 0;
         int firefoxFuncIndex;
         int frameAddress = -1;
+        string? tierName = null;
 
         // The managed method was resolved when the sample was recorded (see UltraEventProcessor), as the
         // address alone is not enough to identify a collectible method whose code block has been recycled.
@@ -517,11 +518,23 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
         {
             category = CategoryManaged;
             firefoxFuncIndex = ConvertManagedMethod(process.ManagedMethods[managedMethodIndex], process, profileThread);
-            // JIT'd code has no image to be relative to: the offset in the method's code, so that the hot spots inside a
-            // function can be told apart (the ETW converter gives the offset in the module image for the same purpose)
-            if (process.ManagedMethods.TryFindMethodCodeStart(address, managedMethodIndex, out var codeStart) && address >= codeStart)
+            // JIT'd code has no image to be relative to: the offset in the code of the method's version (Tier0, Tier1, OSR... each
+            // a code block of its own), so that the hot spots inside a function can be told apart, as in a DOTNET_JitDisasm
+            // listing; the version's tier goes in the frame's implementation (as the ETW converter does)
+            // The version is the code range the address was in at the time of the sample, kept with the code address: a method that
+            // came back to its address after its unload has two there. (Without it - a code address created without its range -
+            // the method's most recent range with the address.)
+            if ((process.CodeAddresses.TryGetCodeVersion(codeAddressIndex, out var codeStart, out var tier)
+                 || process.ManagedMethods.TryFindMethodCodeStart(address, managedMethodIndex, out codeStart, out tier)) && address >= codeStart)
             {
                 frameAddress = (int)Math.Min((address - codeStart).Value, int.MaxValue);
+                // The precompiled (ReadyToRun) code of the framework comes with no tier in its rundown: .NET code inside a mapped
+                // image can only be that (JIT'd code is in anonymous memory), as the ETW converter decides it too
+                if (tier == Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.Unknown && process.Modules.TryFindNativeModuleByAddress(address, out _))
+                {
+                    tier = Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.ReadyToRun;
+                }
+                tierName = TierName(tier);
             }
         }
         else if (process.Modules.TryFindNativeModuleByAddress(address, out var nativeModule))
@@ -559,7 +572,7 @@ internal abstract class UltraConverterToFirefoxUTrace : UltraConverterToFirefox
         frameTable.Func.Add(firefoxFuncIndex);
         frameTable.NativeSymbol.Add(null);
         frameTable.InnerWindowID.Add(null);
-        frameTable.Implementation.Add(null);
+        frameTable.Implementation.Add(tierName is null ? null : GetOrCreateString(tierName, profileThread));
         frameTable.Line.Add(null);
         frameTable.Column.Add(null);
         frameTable.Length++;

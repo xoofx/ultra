@@ -184,6 +184,14 @@ public class UltraProfilerOptions
     public List<string> HardwareCounters { get; } = new();
 
     /// <summary>
+    /// Gets or sets whether each hardware counter sample (<see cref="HardwareCounters"/>) records its call stack (Windows only). Off by
+    /// default: a counter sample is then the code address where the counter fired, a one-frame stack - the same counters per function,
+    /// without the callers in the Firefox Profiler, for a fraction of the trace, of its conversion time and of the counter interrupts'
+    /// cost in the app. Linux records the call chain of every sample.
+    /// </summary>
+    public bool HardwareCounterStacks { get; set; }
+
+    /// <summary>
     /// Gets or sets the samples per second per CPU the kernel aims at for a hardware counter given without a period (Linux only). Default 4000.
     /// </summary>
     public int HardwareCounterFrequency { get; set; } = (int)Linux.PerfEventSpec.DefaultFrequency;
@@ -192,6 +200,13 @@ public class UltraProfilerOptions
     /// Gets or sets the symbol path text.
     /// </summary>
     public string? SymbolPathText { get; set; }
+
+    /// <summary>
+    /// Gets or sets the seconds a symbol server gets to answer a request (Windows ETW conversion). A server that does not is
+    /// skipped for the modules that follow, and the modules it was not asked for are looked up once more at the end.
+    /// Default 5; 0 or less: no limit and no retry (a server that hangs then holds up every module it does not have).
+    /// </summary>
+    public double SymbolServerTimeoutInSeconds { get; set; } = 5;
 
     /// <summary>
     /// Gets or sets the base output file name.

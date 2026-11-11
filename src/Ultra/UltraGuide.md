@@ -82,7 +82,17 @@ A quick text overview (CPU per thread, top functions over all threads, GC collec
 ```console
 ultra report ultra_MyApp_..._pid_1234.json.gz
 ultra report --top 30 --thread Main ultra_MyApp_..._pid_1234.json.gz
+ultra report --compact --detailed ultra_MyApp_..._pid_1234.json.gz
+ultra report --compact --focus=MyNamespace.MyType.Method --start-ms=10000 --end-ms=20000 ultra_MyApp_..._pid_1234.json.gz
 ```
+
+For an agent, `--compact` prints the same report in fewer tokens: `## section` headers, a `total:` line with the units
+and the denominator of the percents, unpadded rows with the name last, and an `omitted:` line per list (what the top N
+leaves out). `--detailed` adds call trees in samples (inclusive and self): top-down for the busiest threads and the callers
+of the top functions over all threads; `--focus=TEXT` gives the callers and the callees of the matching functions instead.
+`--depth`, `--min-percent` and `--max-rows` bound each tree, which ends with what it leaves out; for recursive code,
+`--collapse-recursion` makes a function's frames from its outermost to its innermost call one, so the trees show what all
+the levels do instead of a row per level; `--start-ms`/`--end-ms` restrict the whole report to a time window.
 
 For an in-depth analysis, use the MCP server below: call trees, callers of a function, hotspots by name,
 time windows, GC/JIT markers.

@@ -46,9 +46,7 @@ internal static class Program
         bool elevate = false;
         string? resultFile = null;
         string? stopFile = null;
-        int reportTop = 12, reportWorkers = 0;
-        bool reportOffsets = false;
-        string? reportThread = null;
+        var reportOptions = new UltraProfileReportOptions();
         var options = new UltraProfilerOptions();
 
         var commandApp = new CommandApp("ultra", "Profile an application")
@@ -69,10 +67,12 @@ internal static class Program
                 { "pid=", "The {PID} of the process to attach the profiler to. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "sampling-interval=", $"The {{VALUE}} of the sample interval in ms. Default is {options.CpuSamplingIntervalInMs:0.000}ms{(OperatingSystem.IsMacOS() ? ", minimum is 1ms on macOS" : " (8190Hz)")}.", (float v) => options.CpuSamplingIntervalInMs  = v },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
+                { "symbol-timeout=", SymbolTimeoutHelp(options), (double v) => options.SymbolServerTimeoutInSeconds = v },
                 { "pmc=", OperatingSystem.IsWindows()
                     ? "Linux and Windows: hardware counters to sample besides the CPU time, comma separated {NAME}[:INTERVAL]. Each counter adds a `[name]` track per thread, weighted by the counts. On Windows the names are the ETW profile sources of the machine (e.g. DcacheMisses, CacheMisses, BranchMispredictions, TotalCycles; the Linux names cycles, cache-misses, L1-dcache-load-misses... are accepted too) and INTERVAL is the counter events between two samples. `--pmc list` prints the counters of this machine."
                     : $"Linux and Windows: hardware counters to sample besides the CPU time, comma separated {{NAME}}[:PERIOD] (default: adaptive 4000 samples/s per CPU). Each counter adds a `[name]` track per thread, weighted by the counts. Names, {PerfEventSpec.HelpText}", v => options.HardwareCounters.AddRange((v ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) },
                 { "pmc-frequency=", $"Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given without a period. Default is {options.HardwareCounterFrequency}.", (int v) => options.HardwareCounterFrequency = v },
+                { "pmc-stacks", "Windows only: record the call stack of each --pmc sample, for the callers of a counter in the Firefox Profiler. Without it a counter sample is the code address where the counter fired: the same counters per function, for a fraction of the trace size, of the conversion time and of the counter interrupts' cost in the profiled app. Linux records the call chain of every sample.", v => options.HardwareCounterStacks = v is not null },
                 { "paused", "Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.", v => options.Paused = v is not null },
                 { "delay=", $"Starts profiling after a specific delay (seconds). Default is {options.DelayInSeconds}s.", (double delay) => options.DelayInSeconds = delay },
                 { "duration=", $"Run the profiler for a maximum duration (seconds). Default is {options.DurationInSeconds}s", (double duration) => options.DurationInSeconds = duration },
@@ -120,20 +120,32 @@ internal static class Program
                 { "o|output=", "The base output {FILE} name. Default is the input file name without the extension.", v => options.BaseOutputFileName = v },
                 { "pid=", "The {PID} of the process. Several pids can be separated by commas (or the option repeated): each process gets its own json file.", v => AddPids(pidList, v) },
                 { "symbol-path=", $"The {{VALUE}} of symbol path. The default value is `{options.GetCachedSymbolPath()}`.", v => options.SymbolPathText  = v },
-                { "nofilter", "ETL only: convert the full ETL file. By default only the CPU samples, stacks and context switches of the --pid process(es) are converted, which is much faster on a busy machine; that filtered .etlx file is kept next to the ETL file and reused.", v => options.FastFilter = v is null },
+                { "symbol-timeout=", SymbolTimeoutHelp(options), (double v) => options.SymbolServerTimeoutInSeconds = v },
+                { "nofilter","ETL only: convert the full ETL file. By default only the CPU samples, stacks and context switches of the --pid process(es) are converted, which is much faster on a busy machine; that filtered .etlx file is kept next to the ETL file and reused.", v => options.FastFilter = v is null },
                 { "result-file=", "Write a JSON summary to {FILE} when the command ends (see `ultra profile --help`).", v => resultFile = v },
                 { "<>", "The trace file(s) to convert" },
                 async (_, arguments) => await ConvertAsync(arguments, options, pidList, verbose, resultFile)
             },
-            new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function, the GC (collections, pauses, heap) and the allocations per thread and type. Streams the file: fine for a trace of hundreds of MB.")
+            new Command("report", "Print a text report of a Firefox Profiler json file written by ultra: the CPU per thread, the top functions, the hardware counters per function, the GC (collections, pauses, heap) and the allocations per thread and type, and with --detailed the call trees. Streams the file: fine for a trace of hundreds of MB.")
             {
                 new CommandUsage("Usage: {NAME} [Options] <profile.json.gz>"),
                 _,
                 new HelpOption(),
-                { "top=", "How many threads and functions to list. Default is 12.", (int v) => reportTop = v },
-                { "offsets", "Also the hot code offsets of the top 3 functions (where in a function's code the samples are).", v => reportOffsets = v is not null },
-                { "thread=", "Only the threads whose name contains {TEXT}.", v => reportThread = v },
-                { "workers=", "The parsing threads. Default is half the processors.", (int v) => reportWorkers = v },
+                { "top=", "How many threads and functions to list. Default is 12.", (int v) => reportOptions.Top = v },
+                { "offsets", "Also the hot code offsets of the top 3 functions, --top rows each: where in the code of a function the samples are.", v => reportOptions.CodeOffsets = v is not null },
+                { "thread=", "Only the threads whose name contains {TEXT}.", v => reportOptions.ThreadFilter = v },
+                { "workers=", "The parsing threads. Default is half the processors.", (int v) => reportOptions.Workers = v },
+                { "compact", "Compact text for AI agents: short section headers, the units in the column names, unpadded rows with the name last, a total and an omitted line for each list (what it leaves out), function names without their parameters unless an overload needs them.", v => reportOptions.Compact = v is not null },
+                { "detailed", "Also the call trees, in samples with inclusive and self values: top-down for the busiest threads, bottom-up (the callers) for the top functions by self samples.", v => reportOptions.Detailed = v is not null },
+                { "tree-threads=", "With --detailed: how many of the busiest threads get a top-down tree. Default is 3.", (int v) => reportOptions.TreeThreads = v },
+                { "hotspots=", "With --detailed: how many of the top functions by self samples get a bottom-up tree. Default is 3.", (int v) => reportOptions.Hotspots = v },
+                { "focus=", "The callers and the callees of the functions whose name contains {TEXT} over all the threads, instead of the top functions (implies --detailed).", v => reportOptions.Focus = v },
+                { "collapse-recursion", "In the trees, the frames of a function from its outermost to its innermost call on a stack are one (A > F > B > F > C becomes A > F > C): a recursive algorithm shows what its levels do together instead of a row per level. The self samples do not change.", v => reportOptions.CollapseRecursion = v is not null },
+                { "depth=", "The rows from the root to the deepest row of a tree. Default is 12.", (int v) => reportOptions.MaxDepth = v },
+                { "min-percent=", "Leave out the tree rows under {PERCENT} of their tree (summed in the omitted lines). Default is 1.", (double v) => reportOptions.MinPercent = v },
+                { "max-rows=", "The rows of a tree at most, the heaviest first. Default is 40.", (int v) => reportOptions.MaxRows = v },
+                { "start-ms=", "Only the samples and markers from {MS} (ms from the start of the profile, the scale of the MCP tools).", (double v) => reportOptions.StartMs = v },
+                { "end-ms=", "Only the samples and markers up to {MS}.", (double v) => reportOptions.EndMs = v },
                 { "<>", "The profile json.gz (or json) file" },
                 (_, arguments) =>
                 {
@@ -150,7 +162,7 @@ internal static class Program
                     }
 
                     var clock = Stopwatch.StartNew();
-                    new UltraProfileReport(reportTop, reportOffsets, reportThread, reportWorkers).Run(arguments[0], Console.Out);
+                    new UltraProfileReport(reportOptions).Run(arguments[0], Console.Out);
                     if (verbose)
                     {
                         Console.Error.WriteLine($"({clock.Elapsed.TotalSeconds:F1} s)");
@@ -196,6 +208,8 @@ internal static class Program
             "  ultra profile --elevate --duration 30 --result-file result.json --pid 1234",
             "                                    Capture from a non-admin shell (Windows UAC prompt), JSON summary",
             "  ultra report <profile.json.gz>    Text overview of a profile: CPU per thread, top functions, GC and allocations",
+            "  ultra report --compact --detailed <profile.json.gz>",
+            "                                    The same for an agent, short, with the call trees",
             "  ultra mcp                         MCP server (stdio) to capture and analyze profiles from an agent",
         };
 
@@ -586,6 +600,10 @@ internal static class Program
         result.DurationSeconds = Math.Round(clock.Elapsed.TotalSeconds, 3);
         result.WriteTo(resultFile);
     }
+
+    /// <summary>The help of --symbol-timeout (profile and convert).</summary>
+    private static string SymbolTimeoutHelp(UltraProfilerOptions options)
+        => $"Windows only: the {{SECONDS}} a symbol server gets to answer a request. A server that does not is skipped for the modules that follow, and the modules it was not asked for are looked up once more at the end. Default is {options.SymbolServerTimeoutInSeconds:0.#}s; 0: no limit and no retry.";
 
     /// <summary>
     /// Adds the pids of a --pid option value: one pid or several separated by commas.

@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Runtime.CompilerServices;
+using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using XenoAtom.Collections;
 
 namespace Ultra.Core.Model;
@@ -20,7 +21,8 @@ namespace Ultra.Core.Model;
 /// <param name="Index">The index of the method in <see cref="UTraceManagedMethodList"/>.</param>
 /// <param name="BeginTime">The time at which the code was loaded at this address.</param>
 /// <param name="EndTime">The time at which the code was unloaded, or <see cref="UTimeSpan.MaxValue"/> if it is still loaded.</param>
-public readonly record struct UMethodAddressRange(UAddress BeginAddress, UAddress EndAddress, int Index, UTimeSpan BeginTime, UTimeSpan EndTime)
+/// <param name="Tier">The optimization tier of this code version of the method (Tier0, Tier1, OSR...), from its load or rundown event.</param>
+public readonly record struct UMethodAddressRange(UAddress BeginAddress, UAddress EndAddress, int Index, UTimeSpan BeginTime, UTimeSpan EndTime, OptimizationTier Tier = OptimizationTier.Unknown)
 {
     /// <summary>
     /// Determines if the address is contained within the range.
@@ -55,7 +57,8 @@ readonly record struct UMethodAddressRangeFinder(ulong Address) : IComparable<UM
 /// </summary>
 /// <remarks>
 /// Sorting the ranges sharing the same address by time keeps the successive occupants of a recycled
-/// code block in chronological order.
+/// code block in chronological order: by the time they began, then by the time they ended (a range that
+/// began and ended at one time comes before the one that took its place then), the one still loaded last.
 /// </remarks>
 readonly record struct UMethodAddressRangeComparer : IComparerByRef<UMethodAddressRange>
 {
@@ -64,5 +67,8 @@ readonly record struct UMethodAddressRangeComparer : IComparerByRef<UMethodAddre
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LessThan(in UMethodAddressRange left, in UMethodAddressRange right)
-        => left.BeginAddress == right.BeginAddress ? left.BeginTime < right.BeginTime : left.BeginAddress < right.BeginAddress;
+    {
+        if (left.BeginAddress != right.BeginAddress) return left.BeginAddress < right.BeginAddress;
+        return left.BeginTime == right.BeginTime ? left.EndTime < right.EndTime : left.BeginTime < right.BeginTime;
+    }
 }

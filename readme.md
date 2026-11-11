@@ -98,6 +98,7 @@ Remark: the EventPipe session of the injected sampler still asks the runtime for
 ```console
 $ ultra profile --elevate --duration 30 --result-file result.json --pid 1234   # capture, JSON summary with the profile files
 $ ultra report ultra_my_app_..._pid_1234.json.gz                              # text overview: CPU per thread, top functions
+$ ultra report --compact --detailed ultra_my_app_..._pid_1234.json.gz         # the same, short for an agent, with call trees
 ```
 
 `ultra mcp` is an MCP server (stdio) that lets your AI coding agent capture profiles (`find_processes`, `start_profiling`, `get_job_status`, `stop_job`...) and analyze them (`get_profile_report`, `call_tree`, `call_tree_inverted`, `find_hotspots`, `focus_function`, `query_markers`...). Configure your agent to start `ultra mcp`, e.g. `claude mcp add ultra -- ultra mcp`, or in `.vscode/mcp.json`:

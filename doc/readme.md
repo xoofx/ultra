@@ -96,6 +96,8 @@ $ ultra convert --pid 12594 ultra_my_command_2026-10-30_15_23_46.ultraperf
 
 `--pmc` works on Windows too, through the ETW profile sources of the machine (the counters `wpr -pmcsources` lists). The tracks are the same as on Linux: a `[name]` track under every thread, its samples weighted by the counter events they stand for.
 
+By default a Windows counter sample has no call stack: it is the code address where the counter fired, one frame (the function, its offset and code version), so the call tree of a track lists the functions where the counter events happen, without their callers. `--pmc-stacks` records the stack of each sample for the callers too. The stack walks are then most of the trace: a few counters at a few thousand samples per second per busy thread outnumber the CPU samples, and their stacks make most of the conversion time and of the cost of the counter interrupts in the profiled app.
+
 ```console
 > ultra profile --pmc list
 > ultra profile --pmc InstructionRetired,TotalCycles,DcacheAccesses,BranchMispredictions --pid 12594
@@ -116,7 +118,7 @@ $ ultra convert --pid 12594 ultra_my_command_2026-10-30_15_23_46.ultraperf
 > ultra profile --locks --duration 30 --pid 12594
 ```
 
-`ultra report` sums the waits: per waiting thread (time, waits, longest), per waiting code (the first .NET frame of the wait's stack outside the lock code, Windows only) and per owner, the thread that held the lock:
+`ultra report` sums the waits: per waiting thread (time, waits, longest), per waiting code (the first .NET frame of the wait's stack outside the lock code, Windows only) and per owner, the thread that held the lock (the waits whose event names no holder are one row, `(no holder: the event names none)`):
 
 ```console
 lock contention: 2,867 waits, 11,701.5 ms waiting in total (longest 124.44 ms), on 2 locks
@@ -282,6 +284,10 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
       --symbol-path=VALUE    The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\Local\Temp\
                                SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\alexa\AppData\Local\
                                Temp\SymbolCache*https://symbols.nuget.org/download/symbols`.
+      --symbol-timeout=SECONDS
+                             Windows only: the SECONDS a symbol server gets to answer a request. A server that does not
+                               is skipped for the modules that follow, and the modules it was not asked for are looked
+                               up once more at the end. Default is 5s; 0: no limit and no retry.
       --pmc=NAME             Linux and Windows: hardware counters to sample besides the CPU time, comma separated NAME[:
                                INTERVAL]. Each counter adds a `[name]` track per thread, weighted by the counts. On
                                Windows the names are the ETW profile sources of the machine (e.g. DcacheMisses,
@@ -290,6 +296,11 @@ Usage: ultra profile [Options] <pid | -- execName arg0 arg1...>
                                samples. `--pmc list` prints the counters of this machine.
       --pmc-frequency=VALUE  Linux only: the samples per second per CPU the kernel aims at for a --pmc counter given
                                without a period. Default is 4000.
+      --pmc-stacks           Windows only: record the call stack of each --pmc sample, for the callers of a counter in
+                               the Firefox Profiler. Without it a counter sample is the code address where the counter
+                               fired: the same counters per function, for a fraction of the trace size, of the
+                               conversion time and of the counter interrupts' cost in the profiled app. Linux records
+                               the call chain of every sample.
       --paused               Launch the profiler paused and wait for SPACE or ENTER keys to be pressed.
       --delay=VALUE          Starts profiling after a specific delay (seconds). Default is 0s.
       --duration=VALUE       Run the profiler for a maximum duration (seconds). Default is 120s
@@ -355,6 +366,10 @@ nettrace> <file1_clr.nettrace>]
       --symbol-path=VALUE    The VALUE of symbol path. The default value is `;SRV*C:\Users\alexa\AppData\Local\Temp\
                                SymbolCache*https://msdl.microsoft.com/download/symbols;SRV*C:\Users\alexa\AppData\Local\
                                Temp\SymbolCache*https://symbols.nuget.org/download/symbols`.
+      --symbol-timeout=SECONDS
+                             Windows only: the SECONDS a symbol server gets to answer a request. A server that does not
+                               is skipped for the modules that follow, and the modules it was not asked for are looked
+                               up once more at the end. Default is 5s; 0: no limit and no retry.
       --nofilter             ETL only: convert the full ETL file. By default only the CPU samples, stacks and context
                                switches of the --pid process(es) are converted, which is much faster on a busy machine;
                                that filtered .etlx file is kept next to the ETL file and reused.
@@ -369,15 +384,48 @@ A text summary of a trace, for a quick look or for a tool that cannot load a big
 ```console
 Usage: ultra report [Options] <profile.json.gz>
 
-  -h, -?, --help                    Show this message and exit
-      --top=VALUE                   How many threads and functions to list. Default is 12.
-      --offsets                     Also the hot code offsets of the top 3 functions (where in a function's code the
-                                      samples are).
-      --thread=TEXT                 Only the threads whose name contains TEXT.
-      --workers=VALUE               The parsing threads. Default is half the processors.
+  -h, -?, --help             Show this message and exit
+      --top=VALUE            How many threads and functions to list. Default is 12.
+      --offsets              Also the hot code offsets of the top 3 functions, --top rows each: where in the code of a
+                               function the samples are.
+      --thread=TEXT          Only the threads whose name contains TEXT.
+      --workers=VALUE        The parsing threads. Default is half the processors.
+      --compact              Compact text for AI agents: short section headers, the units in the column names, unpadded
+                               rows with the name last, a total and an omitted line for each list (what it leaves out),
+                               function names without their parameters unless an overload needs them.
+      --detailed             Also the call trees, in samples with inclusive and self values: top-down for the busiest
+                               threads, bottom-up (the callers) for the top functions by self samples.
+      --tree-threads=VALUE   With --detailed: how many of the busiest threads get a top-down tree. Default is 3.
+      --hotspots=VALUE       With --detailed: how many of the top functions by self samples get a bottom-up tree.
+                               Default is 3.
+      --focus=TEXT           The callers and the callees of the functions whose name contains TEXT over all the threads,
+                                instead of the top functions (implies --detailed).
+      --collapse-recursion   In the trees, the frames of a function from its outermost to its innermost call on a stack
+                               are one (A > F > B > F > C becomes A > F > C): a recursive algorithm shows what its
+                               levels do together instead of a row per level. The self samples do not change.
+      --depth=VALUE          The rows from the root to the deepest row of a tree. Default is 12.
+      --min-percent=PERCENT  Leave out the tree rows under PERCENT of their tree (summed in the omitted lines). Default
+                               is 1.
+      --max-rows=VALUE       The rows of a tree at most, the heaviest first. Default is 40.
+      --start-ms=MS          Only the samples and markers from MS (ms from the start of the profile, the scale of the
+                               MCP tools).
+      --end-ms=MS            Only the samples and markers up to MS.
 ```
 
 It prints the CPU time of each thread and its share of the process, the top leaf functions over all threads, and for each hardware counter of `--pmc` its events per function. The `[counter]` tracks are reported apart from the CPU threads: a plain sum over all the threads of the file would count them as CPU time.
+
+`--offsets` adds, for the top 3 functions, where in their code the samples are: the frame addresses of the profile. A .NET method runs in several code versions (Tier0, the OSR version of a hot loop entered from Tier0, Tier1, the instrumented versions of dynamic PGO, ReadyToRun), each a block of code of its own. For a profile written by this version, the frame address of JIT'd code is the offset from the start of its code version (the offsets of a `DOTNET_JitDisasm` listing, the same in every run of the same build). This holds on Windows, Linux and macOS. On Windows, the methods compiled before the profiling started (most of the hot code of an app profiled while running) are only described by the CLR rundown at the end of the trace. TraceLog reads the rundown to name the code addresses but does not write it to the ETLX, so the fast filter keeps the code versions it reads in a `.codeversions` file next to the filtered ETLX. With `--nofilter`, those methods keep their offset into the module, without a version. The frame's `implementation` column carries the version: `Tier0`, `Tier0-instr`, `Tier1`, `Tier1-instr`, `OSR`, `FullOpts`, `MinOpt` or `R2R`. The framework's precompiled methods report no tier, and .NET code inside a module image can only be precompiled, so it is labeled `R2R`. On Windows it keeps its offset in the image; on Linux and macOS it gets the offset in the method's code. The report then lists the offsets per version, with the share of the function's samples each version ran:
+
+```console
+## code offsets Program.<Main>$
+code versions: OSR 2989 = 100.0% of its self samples; offsets from the start of each version's code
+total: 2989 samples with an address, 47 offsets; pct of those samples
+offset version samples pct
++0x30a OSR 583 19.5%
++0x39c OSR 352 11.8%
+```
+
+A hot function still in `Tier0`, or a hot loop running in its `OSR` version, shows there. Profiles written before have no versions: their offsets are listed as before. On Windows, JIT'd code used to get the offset into its module's image, an arbitrary distance cut to 32 bits; on Linux and macOS it already had the offset in its code version, but without the version.
 
 For a .NET process it then prints the GC, from the GC markers of the trace:
 
@@ -387,7 +435,7 @@ For a .NET process it then prints the GC, from the GC markers of the trace:
 - the GC heap after a collection: the largest (per generation, LOH and POH) and the last;
 - the allocations: the MB allocated (and per second) by kind, per thread and per type. The runtime samples one allocation about every 100 KB allocated (an allocation tick, with the bytes allocated since the previous one), so the totals are close but the types are estimates.
 
-With `--thread`, the allocations are those of the matching threads; the GC lines are for the whole process.
+With `--thread`, the report lists and counts only the matching threads (CPU threads and counter tracks) and their allocations; the GC lines are for the whole process.
 
 For a profile taken with `--locks`, it prints the lock contention (see [Lock contention](#lock-contention)). For a profile taken with `--heap-snapshot`, it ends with the snapshot: the bytes per root, the top types and the top retainers (see [GC heap snapshot](#gc-heap-snapshot)).
 
@@ -407,6 +455,49 @@ top allocated types (MB allocated, share, ticks):
      2,380.5 MB   6.6%    23,416  System.String
 ```
 
+`--start-ms` and `--end-ms` restrict the report to a time window, on the scale of the MCP tools' `startMs`/`endMs` (ms from the start of the profile): the samples in it, and the markers (GC, allocations, lock waits) that start in it; the rates and shares are over the window. The GC heap snapshot is whole.
+
+#### Compact text and call trees
+
+`--compact` prints the same report for an AI agent in about half the size: a short `## section` header, a `total:` line with the units and the denominator of the percents, a row of column names carrying the units (`cpu_ms`, `MB`, `events_M`...), unpadded rows with the name last and numbers without thousands separators, and after each list an `omitted:` line, so that a short report still says how much it leaves out. The function names lose their parameters (`Ns.Type.Method`, still a prefix of the full name for `--focus` and the MCP tools) unless another function of the profile has the same name without them: an overload keeps its full signature.
+
+`--detailed` ends the report with call trees in samples, with the semantics of the MCP tools `call_tree` and `call_tree_inverted`:
+
+- top-down trees for the `--tree-threads` busiest threads (default 3);
+- bottom-up trees, the callers, of the `--hotspots` top functions by self samples (default 3) over all the threads: the root is the function with every sample that has it on the stack (from its innermost frame, as `call_tree_inverted` with a focus), its children its callers;
+- with `--focus=TEXT` instead, the callers and the callees (from the outermost frame, as `call_tree` with a focus) of the functions whose name contains `TEXT`, over all the threads.
+
+Each row has the inclusive samples (the function with its callees, or for the callers the samples through that path) and the self samples (the function on top of the stack), both with their percent of the tree's total, which the header gives. A chain of frames that passes all its samples to a single callee (or caller) is one row, its frames joined by ` > ` (calls) or ` < ` (is called by), so the deep entry stacks of .NET threads do not use up the depth. The rows are chosen heaviest first, from the root down, up to `--max-rows` (default 40) and `--depth` rows deep (default 12), none under `--min-percent` of the tree (default 1%). Under a row, the children left out are summed in a `[+N more callees]` row when together they reach the minimum percent, and each tree ends with what it leaves out, by reason. In a callers tree, the rows that run to the thread start would repeat its dozen frames of the runtime and the thread's own code: a row stops at the first frame whose way to the start an earlier row of the tree printed, `f < ...(N frames as above)`, unless that frame has two ways in the tree. Counts of 1 take the singular in the compact text. Below, `[...]` cuts the long rows:
+
+```console
+## callers MyApp.TreeBuilder.SumBins
+total: 1519083 samples with it on the stack = 53.0% of 2864315 cpu samples, self 1468301 = 51.3%, all threads; pct of 1519083; self = it on top
+incl pct self self_pct frames
+1519083 100.0% 1468301 96.7% MyApp.TreeBuilder.SumBins < MyApp.TreeBuilder.ScoreSplit
+ 655440 43.1% 638990 42.1% MyApp.TreeBuilder.BuildTree < MyApp.TreeBuilder.Train < [...]
+ 442268 29.1% 425107 28.0% MyApp.TreeBuilder.SplitNode
+  246695 16.2% 237422 15.6% MyApp.TreeBuilder.SplitNode
+   149076 9.8% 143660 9.5% MyApp.TreeBuilder.SplitNode
+   ...
+       43071 2.8% [+2 more callers]
+...
+omitted: 863643 samples = 56.9%: 97815 under 1% (22 branches), 765828 over 40 rows (34 branches)
+```
+
+A recursive algorithm spends these rows on its levels (above: `SplitNode` calling itself, 57% of the tree left out). `--collapse-recursion` makes the frames of a function from its outermost to its innermost call on a stack one frame, as the Firefox Profiler's "Collapse recursion" for every function at once: `A > F > B > F > C` becomes `A > F > C`, every function is then once on a path, and the leaf stays the leaf, so the self samples do not change. The same profile then shows what the recursion does over all its levels, with 8% of a top-down tree left out instead of 73%:
+
+```console
+## callers MyApp.TreeBuilder.SumBins
+...
+1519083 100.0% 1468301 96.7% MyApp.TreeBuilder.SumBins < MyApp.TreeBuilder.ScoreSplit
+ 655440 43.1% 638990 42.1% MyApp.TreeBuilder.BuildTree < MyApp.TreeBuilder.Train < [...]
+ 442268 29.1% 425107 28.0% MyApp.TreeBuilder.SplitNode < MyApp.TreeBuilder.GrowNode < MyApp.TreeBuilder.BuildTree < ...(13 frames as above)
+ 421375 27.7% 404204 26.6% MyApp.TreeBuilder.GrowNode < ...(14 frames as above)
+omitted: none
+```
+
+The report still streams the file: with `--detailed` each CPU thread keeps its samples per call path of functions, and the trees are built from those at the end, expanding only the rows they print. A profile of 2.9 million samples (138 MB gzipped, 729 MB of json) takes about 5 s either way, with a peak of about 0.4 GB without the trees and 0.5 to 0.7 GB with them.
+
 ### MCP server
 
 `ultra mcp` runs an MCP (Model Context Protocol) server on stdio, for AI coding agents. Configure your agent with a stdio server whose command is `ultra` with the argument `mcp`:
@@ -417,7 +508,7 @@ top allocated types (MB allocated, share, ticks):
 Its tools:
 
 - capture, as background jobs of the ultra command line: `find_processes`, `start_profiling` (pids, or a program to launch), `start_conversion`, `get_job_status` (waits for the end of a job and lists the profile files written), `stop_job` (stops a capture early, the profile is still written), `list_jobs`. On Windows, `start_profiling` shows a UAC prompt to the user when the server does not run as administrator. Unless the job is given a `workingDirectory` or an `output`, the profiles are written in `%LOCALAPPDATA%\ultra\profiles` (Windows) or `~/.local/share/ultra/profiles`, and a conversion writes them next to its trace;
-- analysis of the `json.gz` profiles: `get_profile_report` (the `ultra report` overview), `load_profile`, `get_profile_summary`, `list_threads`, `call_tree`, `call_tree_inverted`, `find_hotspots`, `focus_function`, `module_breakdown`, `top_functions`, `list_samples`, `get_sample`, `get_call_stack`, `query_markers`, `list_counters`, `counter_samples`, and `get_llm_guide` (the field manual of the format for the agent).
+- analysis of the `json.gz` profiles: `get_profile_report` (the `ultra report` overview, with `compact`, `detailed`, `focus` and the tree limits and window of `ultra report`), `load_profile`, `get_profile_summary`, `list_threads`, `call_tree`, `call_tree_inverted`, `find_hotspots`, `focus_function`, `module_breakdown`, `top_functions`, `list_samples`, `get_sample`, `get_call_stack`, `query_markers`, `list_counters`, `counter_samples`, and `get_llm_guide` (the field manual of the format for the agent).
 
 The analysis tools come from [UltraMcp](https://github.com/KirillOsenkov/UltraMcp) by Kirill Osenkov (MIT license, see [THIRD-PARTY-NOTICES.txt](../src/Ultra.Mcp/THIRD-PARTY-NOTICES.txt)).
 

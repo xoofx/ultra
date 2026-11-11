@@ -21,7 +21,8 @@ namespace Ultra.Core.Report;
 /// <remarks>
 /// The profile is streamed thread by thread: one thread inflates the gzip and cuts the JSON into complete thread objects, workers
 /// parse them with <see cref="Utf8JsonReader"/> into pooled arrays (no DOM) and tally them, the tallies are merged at the end. A
-/// 150 MB trace of a 2 minute run on 12 cores takes a few seconds, bound by the inflate.
+/// 150 MB trace of a 2 minute run on 12 cores takes a few seconds, bound by the inflate. With <see cref="Detailed"/>, each CPU thread
+/// also keeps its samples per call path of functions (a few MB for a large trace), from which the call trees are built at the end.
 /// </remarks>
 public sealed partial class UltraProfileReport
 {
@@ -33,11 +34,33 @@ public sealed partial class UltraProfileReport
     /// <param name="threadFilter">Only the threads whose name contains this, when given.</param>
     /// <param name="workers">The parsing threads (default: half the processors).</param>
     public UltraProfileReport(int top = 12, bool codeOffsets = false, string? threadFilter = null, int workers = 0)
+        : this(new UltraProfileReportOptions { Top = top, CodeOffsets = codeOffsets, ThreadFilter = threadFilter, Workers = workers })
     {
-        Top = Math.Max(1, top);
-        CodeOffsets = codeOffsets;
-        ThreadFilter = threadFilter;
-        Workers = workers > 0 ? workers : Math.Max(1, Environment.ProcessorCount / 2);
+    }
+
+    /// <summary>
+    /// Creates a report with all its options: the compact text, the call trees and the time window.
+    /// </summary>
+    public UltraProfileReport(UltraProfileReportOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        Top = Math.Max(1, options.Top);
+        CodeOffsets = options.CodeOffsets;
+        ThreadFilter = options.ThreadFilter;
+        Workers = options.Workers > 0 ? options.Workers : Math.Max(1, Environment.ProcessorCount / 2);
+        Compact = options.Compact;
+        Focus = string.IsNullOrWhiteSpace(options.Focus) ? null : options.Focus.Trim();
+        Detailed = options.Detailed || Focus != null;
+        TreeThreads = Math.Max(0, options.TreeThreads);
+        Hotspots = Math.Max(0, options.Hotspots);
+        CollapseRecursion = options.CollapseRecursion;
+        MaxDepth = Math.Clamp(options.MaxDepth, 1, 200);
+        MinPercent = double.IsFinite(options.MinPercent) ? Math.Clamp(options.MinPercent, 0, 100) : 1.0;
+        MaxRows = Math.Max(1, options.MaxRows);
+        if (options.StartMs.HasValue || options.EndMs.HasValue)
+        {
+            Window = new TimeWindow(options.StartMs ?? double.NegativeInfinity, options.EndMs ?? double.PositiveInfinity);
+        }
     }
 
     /// <summary>How many threads and functions to list.</summary>
@@ -51,6 +74,54 @@ public sealed partial class UltraProfileReport
 
     /// <summary>The parsing threads.</summary>
     public int Workers { get; }
+
+    /// <summary>Whether the report is the compact text for agents (see <see cref="UltraProfileReportOptions.Compact"/>).</summary>
+    public bool Compact { get; }
+
+    /// <summary>Whether the report ends with the call trees (also when <see cref="Focus"/> is given).</summary>
+    public bool Detailed { get; }
+
+    /// <summary>How many of the busiest threads get a top-down tree.</summary>
+    public int TreeThreads { get; }
+
+    /// <summary>How many of the top functions by self samples get a bottom-up tree.</summary>
+    public int Hotspots { get; }
+
+    /// <summary>The functions whose name contains this get the trees instead of the top functions, when not null.</summary>
+    public string? Focus { get; }
+
+    /// <summary>Whether the trees collapse the recursion (see <see cref="UltraProfileReportOptions.CollapseRecursion"/>).</summary>
+    public bool CollapseRecursion { get; }
+
+    /// <summary>The rows from the root to the deepest row of a tree.</summary>
+    public int MaxDepth { get; }
+
+    /// <summary>The rows under this percent of their tree are left out.</summary>
+    public double MinPercent { get; }
+
+    /// <summary>The rows of a tree at most.</summary>
+    public int MaxRows { get; }
+
+    /// <summary>The samples and markers of the report: from start to end (ms from the start of the profile, both included), all when null.</summary>
+    private TimeWindow? Window { get; }
+
+    /// <summary>A time window, its bounds included, as the MCP tools' startMs/endMs. NaN is outside.</summary>
+    private readonly record struct TimeWindow(double Start, double End)
+    {
+        public bool Contains(double time) => time >= Start && time <= End;
+
+        public override string ToString()
+            => FormattableString.Invariant($"[{(double.IsNegativeInfinity(Start) ? "start" : Start.ToString("0.###", CultureInfo.InvariantCulture))}..{(double.IsPositiveInfinity(End) ? "end" : End.ToString("0.###", CultureInfo.InvariantCulture))}]ms");
+    }
+
+    /// <summary>The time the report covers: the profile, or the part of it in the window.</summary>
+    private double DurationMs(ProfileMeta meta)
+    {
+        if (Window is not { } window) return meta.DurationMs;
+        var end = Math.Min(window.End, meta.DurationMs > 0 ? meta.DurationMs : window.End);
+        var start = Math.Max(window.Start, 0);
+        return double.IsFinite(end) && end > start ? end - start : 0;
+    }
 
     /// <summary>
     /// Writes the report of the profile file (<c>.json.gz</c> or <c>.json</c>) to <paramref name="output"/>.
@@ -71,9 +142,10 @@ public sealed partial class UltraProfileReport
         var slices = Channel.CreateBounded<ThreadSlice>(new BoundedChannelOptions(Workers * 2) { SingleWriter = true });
         var tallies = new Tally[Workers];
         var tasks = new Task[Workers];
+        var names = Detailed ? new NameTable() : null;
         for (int w = 0; w < Workers; w++)
         {
-            var tally = tallies[w] = new Tally(CodeOffsets, ThreadFilter);
+            var tally = tallies[w] = new Tally(this, names);
             tasks[w] = Task.Run(async () =>
             {
                 await foreach (var slice in slices.Reader.ReadAllAsync())
@@ -97,6 +169,19 @@ public sealed partial class UltraProfileReport
         Print(meta, tallies, output);
     }
 
+    /// <summary>The tallies of the workers merged: what both texts print.</summary>
+    private sealed record Totals(
+        List<(string Name, int Samples, double CpuMs)> CpuThreads,
+        Dictionary<string, long> CpuLeaf,
+        Dictionary<string, (int Tracks, long Samples, long Events)> Counters,
+        int Threads,
+        double TotalCpuMs)
+    {
+        /// <summary>The CPU threads, the busiest first.</summary>
+        public List<(string Name, int Samples, double CpuMs)> ThreadsByCpu { get; } =
+            CpuThreads.OrderByDescending(x => x.CpuMs).ThenBy(x => x.Name, StringComparer.Ordinal).ToList();
+    }
+
     private void Print(ProfileMeta meta, Tally[] tallies, TextWriter o)
     {
         var cpuThreads = tallies.SelectMany(t => t.CpuThreads).ToList();
@@ -110,19 +195,37 @@ public sealed partial class UltraProfileReport
                 counters[k] = (c.Tracks + v.Tracks, c.Samples + v.Samples, c.Events + v.Events);
             }
         }
-        var threads = tallies.Sum(t => t.Threads);
-        var totalCpu = cpuThreads.Sum(x => x.CpuMs);
+        var totals = new Totals(cpuThreads, cpuLeaf, counters, tallies.Sum(t => t.Threads), cpuThreads.Sum(x => x.CpuMs));
+
+        if (Compact)
+        {
+            BuildShortNames(tallies);
+            PrintCompact(meta, totals, tallies, o);
+        }
+        else
+        {
+            PrintText(meta, totals, tallies, o);
+        }
+
+        if (Detailed) PrintTrees(totals, tallies, o);
+    }
+
+    private void PrintText(ProfileMeta meta, Totals totals, Tally[] tallies, TextWriter o)
+    {
+        var (cpuThreads, cpuLeaf, counters, threads, totalCpu) = totals;
+        var duration = DurationMs(meta);
 
         // The report is read by tools and agents (`ultra report`, MCP): the same numbers whatever the culture of the machine
         void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
 
         Line($"product={meta.Product} abi={meta.Abi} cpus={meta.Cpus} duration={meta.DurationMs / 1000:F1} s{(meta.IntervalMs > 0 ? $" sampling={1000 / meta.IntervalMs:F0}/s" : "")}");
+        if (Window is { } window) Line($"window={window} ({duration / 1000:F1} s): only the samples and markers in it, the GC heap snapshot is whole");
         o.WriteLine();
         var counterTracks = string.Join(", ", counters.OrderBy(x => x.Key).Select(x => FormattableString.Invariant($"{x.Key}: {x.Value.Tracks}")));
-        Line($"{threads} threads in the file: {cpuThreads.Count} CPU threads and {counters.Values.Sum(x => x.Tracks)} counter tracks{(counters.Count > 0 ? $" ({counterTracks})" : "")}");
-        Line($"CPU: {totalCpu / 1000:F1} s over {meta.DurationMs / 1000:F1} s = {totalCpu / Math.Max(1, meta.DurationMs):F2} cores busy on average, {cpuThreads.Sum(x => (long)x.Samples):N0} samples");
+        Line($"{threads} threads in the file{(ThreadFilter != null ? FormattableString.Invariant($", those whose name contains \"{ThreadFilter}\"") : "")}: {cpuThreads.Count} CPU threads and {counters.Values.Sum(x => x.Tracks)} counter tracks{(counters.Count > 0 ? $" ({counterTracks})" : "")}");
+        Line($"CPU: {totalCpu / 1000:F1} s over {duration / 1000:F1} s = {totalCpu / Math.Max(1, duration):F2} cores busy on average, {cpuThreads.Sum(x => (long)x.Samples):N0} samples");
         o.WriteLine("per thread (samples, CPU ms, share of the process CPU):");
-        var rows = cpuThreads.OrderByDescending(x => x.CpuMs).ThenBy(x => x.Name, StringComparer.Ordinal).ToList();
+        var rows = totals.ThreadsByCpu;
         foreach (var (name, n, cpu) in rows.Take(Top))
         {
             Line($"  {name,-44} {n,9:N0} {cpu,10:N0} ms {(totalCpu > 0 ? cpu / totalCpu * 100 : 0),5:F1}%");
@@ -145,14 +248,21 @@ public sealed partial class UltraProfileReport
         {
             foreach (var (leaf, _) in cpuLeaf.OrderByDescending(x => x.Value).Take(3))
             {
-                var byOffset = Merge(tallies.Select(t => t.CpuOffsets.GetValueOrDefault(leaf)).Where(x => x != null)!);
-                if (byOffset.Count == 0) continue;
-                var total = byOffset.Values.Sum();
+                var (offsets, tiers) = CodeOffsetsOf(tallies, leaf);
                 o.WriteLine();
-                Line($"hot code offsets in {leaf} ({total:N0} samples with an address, {byOffset.Count} distinct):");
-                foreach (var (offset, c) in byOffset.OrderByDescending(x => x.Value).ThenBy(x => x.Key).Take(10))
+                if (offsets.Count == 0)
                 {
-                    Line($"  +0x{offset:x}: {c:N0} ({c * 100.0 / total:F1}%)");
+                    // said, not skipped: an empty list is the trace's (no address recorded for its frames), not the report's
+                    Line($"hot code offsets in {leaf}: none, its frames have no code address in the trace");
+                    continue;
+                }
+                var total = offsets.Sum(x => x.Samples);
+                var leafSamples = tiers.Sum(x => x.Samples);
+                var tierText = tiers.Count > 0 ? "; code versions: " + string.Join(", ", tiers.Select(x => FormattableString.Invariant($"{TierLabel(x.Tier)} {x.Samples * 100.0 / leafSamples:F1}%"))) : "";
+                Line($"hot code offsets in {leaf} ({total:N0} samples with an address, {offsets.Count} distinct{tierText}):");
+                foreach (var (tier, offset, c) in offsets.Take(Top))
+                {
+                    Line($"  +0x{(uint)offset:x}{(tiers.Count > 0 ? " " + TierLabel(tier) : "")}: {c:N0} ({c * 100.0 / total:F1}%)");
                 }
             }
         }
@@ -172,6 +282,26 @@ public sealed partial class UltraProfileReport
         PrintLocks(LockTally.Merge(tallies.Select(t => t.Locks)), o);
         PrintHeap(HeapTally.Merge(tallies.Select(t => t.Heap)), o);
     }
+
+    /// <summary>
+    /// The code offsets of a leaf function, the most sampled first, each with its code version (the optimization tier of the code
+    /// it is an offset in: Tier0, Tier1, OSR...), and the samples of the function per code version. No versions when the trace has
+    /// none (native code, older conversions, Linux): the offsets are then printed as before, without a version column.
+    /// </summary>
+    private static (List<(string Tier, int Offset, long Samples)> Offsets, List<(string Tier, long Samples)> Tiers) CodeOffsetsOf(Tally[] tallies, string leaf)
+    {
+        var byOffset = Merge(tallies.Select(t => t.CpuOffsets.GetValueOrDefault(leaf)).Where(x => x != null)!);
+        var byTier = Merge(tallies.Select(t => t.CpuTiers.GetValueOrDefault(leaf)).Where(x => x != null)!);
+        var offsets = byOffset.OrderByDescending(x => x.Value).ThenBy(x => x.Key.Tier, StringComparer.Ordinal).ThenBy(x => (uint)x.Key.Offset)
+            .Select(x => (x.Key.Tier, x.Key.Offset, x.Value)).ToList();
+        var tiers = byTier.Keys.Any(x => x.Length > 0)
+            ? byTier.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Select(x => (x.Key, x.Value)).ToList()
+            : [];
+        return (offsets, tiers);
+    }
+
+    /// <summary>A code version as printed: its tier, "-" for the frames without one (native code beside the JIT'd versions).</summary>
+    private static string TierLabel(string tier) => tier.Length > 0 ? tier : "-";
 
     private static Dictionary<TKey, long> Merge<TKey>(IEnumerable<Dictionary<TKey, long>> parts) where TKey : notnull
     {
@@ -361,9 +491,11 @@ public sealed partial class UltraProfileReport
         {
             string name = "";
             string[]? strings = null;
-            int[]? frameFunc = null, frameAddress = null, frameCategory = null, stackFrame = null, stackPrefix = null, funcName = null, sampleStack = null;
+            int[]? frameFunc = null, frameAddress = null, frameCategory = null, frameTier = null, stackFrame = null, stackPrefix = null, funcName = null, sampleStack = null;
+            int frameTierCount = 0;
             long[]? weight = null, cpuDelta = null;
-            int frameCount = 0, stackCount = 0, stackPrefixCount = 0, funcCount = 0, sampleCount = 0, weightCount = 0, cpuDeltaCount = 0;
+            double[]? sampleTime = null, sampleTimeDelta = null, times = null;
+            int frameCount = 0, stackCount = 0, stackPrefixCount = 0, funcCount = 0, sampleCount = 0, weightCount = 0, cpuDeltaCount = 0, sampleTimeCount = 0, sampleTimeDeltaCount = 0;
             GcMarkers? markers = null;
 
             var reader = new Utf8JsonReader(json, true, default);
@@ -378,22 +510,23 @@ public sealed partial class UltraProfileReport
                 else if (reader.ValueTextEquals("stringArray"u8)) strings = ReadStrings(ref reader);
                 else if (reader.ValueTextEquals("frameTable"u8))
                 {
+                    var columns = new List<(byte[] Name, Action<int[], int> Set)>
+                    {
+                        ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)),
+                        ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)),
+                    };
                     // The categories of the frames (.NET or native) only for the threads with lock waits: the waiting code is the
                     // first .NET frame of the wait's stack outside the lock code
-                    if (markers?.HasLockContention == true)
-                    {
-                        ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)), ("category"u8.ToArray(), (a, c) => frameCategory = a));
-                    }
-                    else
-                    {
-                        ReadTable(ref reader, ("func"u8.ToArray(), (a, c) => (frameFunc, frameCount) = (a, c)), ("address"u8.ToArray(), (a, c) => (frameAddress, frameCount) = (a, c)));
-                    }
+                    if (markers?.HasLockContention == true) columns.Add(("category"u8.ToArray(), (a, c) => frameCategory = a));
+                    // The code version of each frame (its optimization tier: Tier0, Tier1, OSR...) for the code offsets
+                    if (tally.CodeOffsets) columns.Add(("implementation"u8.ToArray(), (a, c) => (frameTier, frameTierCount) = (a, c)));
+                    ReadTable(ref reader, columns.ToArray());
                 }
                 else if (reader.ValueTextEquals("stackTable"u8))
                 {
-                    // The prefixes (the paths to the root) are only used for the heap bytes track: the name comes first in the
-                    // files ultra writes, read them anyway when it is not known yet
-                    if (name.Length == 0 || name.EndsWith($"[{UltraHeapSnapshotConverter.BytesCounter}]", StringComparison.Ordinal) || markers?.HasLockContention == true)
+                    // The prefixes (the paths to the root) are only used for the call trees, the heap bytes track and the lock
+                    // waits: the name comes first in the files ultra writes, read them anyway when it is not known yet
+                    if (tally.CallPaths || name.Length == 0 || name.EndsWith($"[{UltraHeapSnapshotConverter.BytesCounter}]", StringComparison.Ordinal) || markers?.HasLockContention == true)
                     {
                         ReadTable(ref reader, ("frame"u8.ToArray(), (a, c) => (stackFrame, stackCount) = (a, c)), ("prefix"u8.ToArray(), (a, c) => (stackPrefix, stackPrefixCount) = (a, c)));
                     }
@@ -411,6 +544,8 @@ public sealed partial class UltraProfileReport
                         if (reader.ValueTextEquals("stack"u8)) (sampleStack, sampleCount) = ReadInts(ref reader);
                         else if (reader.ValueTextEquals("weight"u8)) (weight, weightCount) = ReadLongs(ref reader);
                         else if (reader.ValueTextEquals("threadCPUDelta"u8)) (cpuDelta, cpuDeltaCount) = ReadLongs(ref reader);
+                        else if (tally.Windowed && reader.ValueTextEquals("time"u8)) (sampleTime, sampleTimeCount) = ReadDoubles(ref reader);
+                        else if (tally.Windowed && reader.ValueTextEquals("timeDeltas"u8)) (sampleTimeDelta, sampleTimeDeltaCount) = ReadDoubles(ref reader);
                         else Skip(ref reader);
                     }
                 }
@@ -427,13 +562,36 @@ public sealed partial class UltraProfileReport
                     Func<int, string> waitingIn = stack => WaitingIn(stack, stringTable, stackFrame, stackCount, stackPrefix, stackPrefixCount, frameFunc, frameCategory, funcName);
                     tally.AddMarkers(name, stringTable, markers, waitingIn);
                 }
-                tally.Add(name, strings ?? [], frameFunc, frameAddress, frameCount, stackFrame, stackCount, stackPrefix, stackPrefixCount, funcName, funcCount, sampleStack, sampleCount, weight, weightCount, cpuDelta, cpuDeltaCount);
+                if (tally.Windowed) times = SampleTimes(sampleCount, sampleTime, sampleTimeCount, sampleTimeDelta, sampleTimeDeltaCount);
+                tally.Add(name, strings ?? [], frameFunc, frameAddress, frameCount, stackFrame, stackCount, stackPrefix, stackPrefixCount, funcName, funcCount, sampleStack, sampleCount, weight, weightCount, cpuDelta, cpuDeltaCount, times, frameTier, frameTierCount);
             }
             finally
             {
-                Return(frameFunc); Return(frameAddress); Return(frameCategory); Return(stackFrame); Return(stackPrefix); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
+                Return(frameFunc); Return(frameAddress); Return(frameCategory); Return(frameTier); Return(stackFrame); Return(stackPrefix); Return(funcName); Return(sampleStack); Return(weight); Return(cpuDelta);
+                Return(sampleTime); Return(sampleTimeDelta); Return(times);
                 if (markers != null) { Return(markers.Name); Return(markers.Start); Return(markers.End); }
             }
+        }
+
+        /// <summary>
+        /// The time of each sample in ms from the start of the profile (pooled): "time" when the file has it, else the running sum of
+        /// "timeDeltas" (what ultra writes; the scale of the markers and of the MCP tools' windows).
+        /// </summary>
+        private static double[] SampleTimes(int count, double[]? time, int timeCount, double[]? deltas, int deltaCount)
+        {
+            var times = ArrayPool<double>.Shared.Rent(Math.Max(1, count));
+            if (time != null && timeCount >= count)
+            {
+                Array.Copy(time, times, count);
+                return times;
+            }
+            double sum = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (deltas != null && i < deltaCount && !double.IsNaN(deltas[i])) sum += deltas[i];
+                times[i] = sum;
+            }
+            return times;
         }
 
         private static void Skip(ref Utf8JsonReader reader)
@@ -513,21 +671,44 @@ public sealed partial class UltraProfileReport
         }
     }
 
-    /// <summary>The tallies of one worker: per thread rows, leaf function counts, code offsets, counter events.</summary>
-    private sealed partial class Tally(bool offsets, string? threadFilter)
+    /// <summary>The tallies of one worker: per thread rows, leaf function counts, code offsets, counter events, and the call paths of the trees.</summary>
+    private sealed partial class Tally(UltraProfileReport report, NameTable? names)
     {
         [GeneratedRegex(@"\[([^\]]+)\]$")]
         private static partial Regex CounterSuffix();
 
+        private readonly bool offsets = report.CodeOffsets;
+        private readonly string? threadFilter = report.ThreadFilter;
+        private readonly TimeWindow window = report.Window ?? default;
+
         public readonly List<(string Name, int Samples, double CpuMs)> CpuThreads = new();
         public readonly Dictionary<string, long> CpuLeaf = new();
-        public readonly Dictionary<string, Dictionary<int, long>> CpuOffsets = new();
+
+        /// <summary>The samples per leaf function, code version (its optimization tier, "" when the trace has none) and code offset.</summary>
+        public readonly Dictionary<string, Dictionary<(string Tier, int Offset), long>> CpuOffsets = new();
+
+        /// <summary>The samples per leaf function and code version (with or without an address): where the function ran from.</summary>
+        public readonly Dictionary<string, Dictionary<string, long>> CpuTiers = new();
+
+        /// <summary>Whether the code offsets are tallied: the parser then reads the code version of the frames.</summary>
+        public bool CodeOffsets => offsets;
         public readonly Dictionary<string, Dictionary<string, long>> CounterLeaf = new();
         public readonly Dictionary<string, (int Tracks, long Samples, long Events)> Counters = new();
         public readonly GcTally Gc = new();
         public readonly HeapTally Heap = new();
         public readonly LockTally Locks = new();
         public int Threads;
+
+        /// <summary>The names of the functions of the profile (compact text: a name loses its parameters only when no other has the same).</summary>
+        public readonly HashSet<string> FunctionNames = new(StringComparer.Ordinal);
+
+        /// <summary>Whether only the samples and markers of a time window are counted: the parser then reads the sample times.</summary>
+        public bool Windowed => report.Window.HasValue;
+
+        /// <summary>Whether the call paths of the CPU threads are kept for the trees: the parser then reads the stack prefixes.</summary>
+        public bool CallPaths => names != null;
+
+        private bool InWindow(double[]? times, int sample) => times == null || window.Contains(times[sample]);
 
         /// <summary>The GC markers of a thread (none on the counter tracks); its allocations only when it passes the thread filter.</summary>
         public void AddMarkers(string name, string[] strings, GcMarkers markers, Func<int, string> waitingIn)
@@ -545,18 +726,19 @@ public sealed partial class UltraProfileReport
                 return;
             }
             var passesFilter = threadFilter == null || name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase);
-            Gc.Add(name, strings, markers, passesFilter);
-            if (passesFilter && markers.HasLockContention) Locks.Add(name, markers, waitingIn);
+            TimeWindow? markerWindow = Windowed ? window : null;
+            Gc.Add(name, strings, markers, passesFilter, markerWindow);
+            if (passesFilter && markers.HasLockContention) Locks.Add(name, markers, waitingIn, markerWindow);
         }
 
         public void Add(string name, string[] strings, int[]? frameFunc, int[]? frameAddress, int frameCount, int[]? stackFrame, int stackCount, int[]? stackPrefix, int stackPrefixCount, int[]? funcName, int funcCount,
-            int[]? sampleStack, int sampleCount, long[]? weight, int weightCount, long[]? cpuDelta, int cpuDeltaCount)
+            int[]? sampleStack, int sampleCount, long[]? weight, int weightCount, long[]? cpuDelta, int cpuDeltaCount, double[]? times, int[]? frameTier, int frameTierCount)
         {
             Threads++;
             Locks.AddThreadName(name);
             var counter = CounterSuffix().Match(name) is { Success: true } m ? m.Groups[1].Value : null;
 
-            // The GC heap snapshot tracks: for the whole process, so not filtered
+            // The GC heap snapshot tracks: for the whole process, so not filtered (nor windowed: the snapshot is taken at the end)
             if (counter is UltraHeapSnapshotConverter.BytesCounter or UltraHeapSnapshotConverter.ObjectsCounter)
             {
                 if (sampleStack != null && stackFrame != null && frameFunc != null && funcName != null)
@@ -566,7 +748,16 @@ public sealed partial class UltraProfileReport
                 return;
             }
 
-            if (threadFilter != null && !name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase)) sampleCount = 0;
+            if (report.Compact && funcName != null)
+            {
+                for (int f = 0; f < funcCount; f++)
+                {
+                    if ((uint)funcName[f] < (uint)strings.Length) FunctionNames.Add(strings[funcName[f]]);
+                }
+            }
+
+            // a thread outside the filter is not in the report: no row and no count of its own, as a CPU thread or a counter track
+            if (threadFilter != null && !name.Contains(threadFilter, StringComparison.OrdinalIgnoreCase)) return;
             if (sampleCount == 0 || sampleStack == null || stackFrame == null || frameFunc == null || funcName == null)
             {
                 if (counter == null) CpuThreads.Add((name, 0, 0));
@@ -577,34 +768,68 @@ public sealed partial class UltraProfileReport
             {
                 var agg = CounterLeaf.TryGetValue(counter, out var existing) ? existing : CounterLeaf[counter] = new();
                 long total = 0;
+                int inWindow = 0;
                 for (int i = 0; i < sampleCount; i++)
                 {
+                    if (!InWindow(times, i)) continue;
                     var w = weight != null && i < weightCount ? weight[i] : 1;
                     var leaf = strings[funcName[frameFunc[stackFrame[sampleStack[i]]]]];
                     agg[leaf] = agg.GetValueOrDefault(leaf) + w;
                     total += w;
+                    inWindow++;
                 }
                 var c = Counters.GetValueOrDefault(counter);
-                Counters[counter] = (c.Tracks + 1, c.Samples + sampleCount, c.Events + total);
+                Counters[counter] = (c.Tracks + 1, c.Samples + inWindow, c.Events + total);
                 return;
             }
 
             double cpuMs = 0;
-            if (cpuDelta != null)
+            int samples = sampleCount;
+            if (times == null)
             {
-                for (int i = 0; i < cpuDeltaCount; i++) cpuMs += cpuDelta[i];
+                if (cpuDelta != null)
+                {
+                    for (int i = 0; i < cpuDeltaCount; i++) cpuMs += cpuDelta[i];
+                }
+            }
+            else
+            {
+                samples = 0;
+                for (int i = 0; i < sampleCount; i++)
+                {
+                    if (!InWindow(times, i)) continue;
+                    samples++;
+                    if (cpuDelta != null && i < cpuDeltaCount) cpuMs += cpuDelta[i];
+                }
             }
             cpuMs /= 1e6;
-            CpuThreads.Add((name, sampleCount, cpuMs));
+            CpuThreads.Add((name, samples, cpuMs));
+            if (names != null && samples > 0)
+            {
+                AddCallPaths(name, cpuMs, samples, strings, frameFunc, frameCount, stackFrame, stackCount, stackPrefix, stackPrefixCount, funcName, funcCount, sampleStack, sampleCount, times);
+            }
             for (int i = 0; i < sampleCount; i++)
             {
+                if (!InWindow(times, i)) continue;
                 var frame = stackFrame[sampleStack[i]];
                 var leaf = strings[funcName[frameFunc[frame]]];
                 CpuLeaf[leaf] = CpuLeaf.GetValueOrDefault(leaf) + 1;
-                if (offsets && frameAddress != null && frame < frameCount && frameAddress[frame] >= 0)
+                if (!offsets) continue;
+
+                // The code version of the frame: its tier (Tier0, Tier1, OSR...), "" when the trace has none (native code, older
+                // conversions, Linux); the offsets of two versions of a function are offsets in different code
+                var tierIndex = frameTier != null && frame < frameTierCount ? frameTier[frame] : -1;
+                var tier = (uint)tierIndex < (uint)strings.Length ? strings[tierIndex] : "";
+                var tiers = CpuTiers.TryGetValue(leaf, out var t) ? t : CpuTiers[leaf] = new(StringComparer.Ordinal);
+                tiers[tier] = tiers.GetValueOrDefault(tier) + 1;
+
+                // -1 is no address; the others are int32 offsets, which wrap negative far from a module's base (JIT'd code in traces
+                // converted before the offsets became offsets in the code version: all the offsets of a run were lost when skipped)
+                if (frameAddress != null && frame < frameCount && frameAddress[frame] != -1)
                 {
                     var byOffset = CpuOffsets.TryGetValue(leaf, out var o) ? o : CpuOffsets[leaf] = new();
-                    byOffset[frameAddress[frame]] = byOffset.GetValueOrDefault(frameAddress[frame]) + 1;
+                    var key = (tier, frameAddress[frame]);
+                    byOffset[key] = byOffset.GetValueOrDefault(key) + 1;
                 }
             }
         }

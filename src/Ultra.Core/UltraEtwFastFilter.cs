@@ -7,6 +7,7 @@ using System.Reflection;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Etlx;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Parsers.Clr;
 using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 
 namespace Ultra.Core;
@@ -49,7 +50,13 @@ internal static class UltraEtwFastFilter
     }
 
     /// <summary>
-    /// Writes the filtered ETLX file next to the first ETL file (reused if it is newer than the ETL files).
+    /// Gets the name of the file of the code versions of a filtered ETLX file (see <see cref="ReadCodeVersions"/>).
+    /// </summary>
+    public static string GetCodeVersionsFileName(string filteredFile) => Path.ChangeExtension(filteredFile, ".codeversions");
+
+    /// <summary>
+    /// Writes the filtered ETLX file next to the first ETL file (reused if it is newer than the ETL files), and the code versions
+    /// of the methods of the processes next to it.
     /// </summary>
     /// <param name="etlFiles">The merged ETL file, or the unmerged ETL files of a profile (kernel, user, rundown), read as one trace.</param>
     /// <param name="processIds">The processes whose samples, stacks and context switches are kept.</param>
@@ -59,7 +66,9 @@ internal static class UltraEtwFastFilter
     {
         var filteredFile = GetFilteredFileName(etlFiles[0], processIds);
         var filteredInfo = new FileInfo(filteredFile);
-        if (filteredInfo.Exists && filteredInfo.Length > 0 && etlFiles.All(x => filteredInfo.LastWriteTimeUtc >= File.GetLastWriteTimeUtc(x)))
+        // An ETLX filtered by an ultra without the code versions file, or with the file of an older format, is converted again
+        if (filteredInfo.Exists && filteredInfo.Length > 0 && etlFiles.All(x => filteredInfo.LastWriteTimeUtc >= File.GetLastWriteTimeUtc(x))
+            && HasCodeVersions(filteredFile))
         {
             options.LogProgress?.Invoke($"Reusing fast filtered ETLX file {Path.GetFileName(filteredFile)}");
             return filteredFile;
@@ -73,6 +82,7 @@ internal static class UltraEtwFastFilter
         catch
         {
             try { File.Delete(filteredFile); } catch { /* ignore */ }
+            try { File.Delete(GetCodeVersionsFileName(filteredFile)); } catch { /* ignore */ }
             throw;
         }
 
@@ -95,6 +105,7 @@ internal static class UltraEtwFastFilter
 
         using var source = etlFiles.Count == 1 ? new ETWTraceEventSource(etlFiles[0]) : new ETWTraceEventSource(etlFiles, TraceEventSourceType.MergeAll);
         var sessionDurationInMs = Math.Max(1.0, source.SessionDuration.TotalMilliseconds);
+        var codeVersions = new List<CodeVersion>();
 
         // The hook sees the typed events (TraceLog registers the kernel parser) before TraceLog does
         source.AddDispatchHook((evt, dispatch) =>
@@ -104,6 +115,14 @@ internal static class UltraEtwFastFilter
             {
                 lastLogInMs = clock.ElapsedMilliseconds;
                 options.LogStepProgress?.Invoke($"Converting ETL file fast filtered {Math.Min(100.0, evt.TimeStampRelativeMSec * 100.0 / sessionDurationInMs):0}%, kept {keptCount:N0} of {eventCount:N0} events");
+            }
+
+            // The code versions of the methods (each tier, OSR...: start, size, tier), from their load events and from the CLR rundown,
+            // which TraceLog reads to name the code addresses but does not write to the ETLX: the methods compiled before the profiling
+            // started, the hot code of a running app, are only in the rundown. TraceLog subscribes to these events, so they come typed.
+            if (evt is MethodLoadUnloadTraceDataBase method && processIds.Contains(evt.ProcessID) && method.MethodStartAddress != 0 && method.MethodSize > 0)
+            {
+                codeVersions.Add(CodeVersionOf(method));
             }
 
             if (!canFilter)
@@ -142,8 +161,101 @@ internal static class UltraEtwFastFilter
         });
 
         TraceLog.CreateFromEventTraceLogFile(source, filteredFile, new TraceLogOptions());
+        WriteCodeVersions(GetCodeVersionsFileName(filteredFile), codeVersions);
 
-        options.LogStepProgress?.Invoke($"Converted ETL file fast filtered in {clock.Elapsed.TotalSeconds:0.0}s, kept {keptCount:N0} of {eventCount:N0} events");
+        options.LogStepProgress?.Invoke($"Converted ETL file fast filtered in {clock.Elapsed.TotalSeconds:0.0}s, kept {keptCount:N0} of {eventCount:N0} events, {codeVersions.Count:N0} method code versions");
+    }
+
+    /// <summary>What an event says of the code version it names (see <see cref="CodeVersion"/>).</summary>
+    public enum CodeVersionEvent : byte
+    {
+        /// <summary>The method was compiled: its code is there from the event on.</summary>
+        Load,
+
+        /// <summary>The method was unloaded (a collectible assembly, a dynamic method): its code is there until the event, and its memory can be used again.</summary>
+        Unload,
+
+        /// <summary>The rundown at the start of a session: the code was already there.</summary>
+        RundownStart,
+
+        /// <summary>The rundown at the end of the profiling: the code is still there.</summary>
+        RundownEnd,
+    }
+
+    /// <summary>
+    /// An event naming a code version of a method of a process: its code block (start, size) and its optimization tier, the method
+    /// (the runtime's id: two methods can have had the same address, one after the other), the time of the event (ms, its
+    /// TimeStampRelativeMSec) and what it says. <see cref="UltraEtwCodeVersions"/> makes the versions and their lifetimes of them.
+    /// </summary>
+    public readonly record struct CodeVersion(int ProcessId, ulong Start, int Size, OptimizationTier Tier, long MethodId, double TimeMs, CodeVersionEvent Event);
+
+    /// <summary>The code version a CLR method event names.</summary>
+    public static CodeVersion CodeVersionOf(MethodLoadUnloadTraceDataBase method)
+    {
+        // The opcodes of the Method task, of the runtime's provider and of the rundown's: Load 33, Unload 34, DCStart 35, DCStop 36,
+        // then the same four with the method's names (Verbose) from 37
+        var kind = (int)method.Opcode switch
+        {
+            34 or 38 => CodeVersionEvent.Unload,
+            35 or 39 => CodeVersionEvent.RundownStart,
+            36 or 40 => CodeVersionEvent.RundownEnd,
+            _ => CodeVersionEvent.Load,
+        };
+        return new CodeVersion(method.ProcessID, method.MethodStartAddress, method.MethodSize, method.OptimizationTier, method.MethodID, method.TimeStampRelativeMSec, kind);
+    }
+
+    // "UCV2": the format of the code versions file (UCV1 had no method, time and event: such a file is not read, its ETLX is filtered again)
+    private const int CodeVersionsMagic = 0x32564355;
+
+    internal static void WriteCodeVersions(string file, List<CodeVersion> versions)
+    {
+        using var writer = new BinaryWriter(File.Create(file));
+        writer.Write(CodeVersionsMagic);
+        writer.Write(versions.Count);
+        foreach (var version in versions)
+        {
+            writer.Write(version.ProcessId);
+            writer.Write(version.Start);
+            writer.Write(version.Size);
+            writer.Write((int)version.Tier);
+            writer.Write(version.MethodId);
+            writer.Write(version.TimeMs);
+            writer.Write((byte)version.Event);
+        }
+    }
+
+    /// <summary>True when the code versions file of a filtered ETLX file is there, in the format this ultra reads.</summary>
+    internal static bool HasCodeVersions(string filteredFile)
+    {
+        try
+        {
+            using var reader = new BinaryReader(File.OpenRead(GetCodeVersionsFileName(filteredFile)));
+            return reader.BaseStream.Length >= 8 && reader.ReadInt32() == CodeVersionsMagic;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The code versions written next to a filtered ETLX file, empty when there is none (an ETLX converted with --nofilter: then
+    /// only the methods compiled during the profiling are known, from their load events in the ETLX).
+    /// </summary>
+    public static List<CodeVersion> ReadCodeVersions(string etlxFile)
+    {
+        var file = GetCodeVersionsFileName(etlxFile);
+        var versions = new List<CodeVersion>();
+        if (!File.Exists(file)) return versions;
+        using var reader = new BinaryReader(File.OpenRead(file));
+        if (reader.BaseStream.Length < 8 || reader.ReadInt32() != CodeVersionsMagic) return versions;
+        var count = reader.ReadInt32();
+        for (int i = 0; i < count; i++)
+        {
+            versions.Add(new CodeVersion(reader.ReadInt32(), reader.ReadUInt64(), reader.ReadInt32(), (OptimizationTier)reader.ReadInt32(),
+                reader.ReadInt64(), reader.ReadDouble(), (CodeVersionEvent)reader.ReadByte()));
+        }
+        return versions;
     }
 
     private static unsafe void DispatchWithoutInlineStack(TraceEvent evt, Action<TraceEvent> dispatch)

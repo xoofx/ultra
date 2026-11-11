@@ -363,21 +363,20 @@ internal class UltraEventProcessor
 
     private void ProcessMethodUnloadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
-        // The method might never have been reported as loaded (e.g. it was already loaded when the CLR
-        // provider was enabled), so register it first to keep the samples taken before the unload symbolized.
-        RegisterMethod(method, default);
-
-        // Dynamic methods are collectible: the runtime frees their code and hands the same address to
-        // another method later, so the code range must be closed to be able to resolve both of them.
+        // Dynamic methods are collectible: the runtime frees their code and hands the same address - and the same method id -
+        // to another method later, so the code range must be closed to be able to resolve both of them.
+        // The method might never have been reported as loaded (e.g. it was already loaded when the CLR provider was enabled):
+        // it is then recorded as loaded until now, to keep the samples taken before the unload symbolized.
         var managedMethods = GetProcessState(method).CurrentProcess!.ManagedMethods;
-        managedMethods.UnloadManagedMethod(method.MethodID, method.MethodStartAddress, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec));
+        managedMethods.UnloadManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec), method.OptimizationTier);
     }
 
     /// <summary>
     /// Processes a method rundown event (DCStart/DCStop) that enumerates the methods loaded at the time of
-    /// the rundown. The actual load time is unknown, so the code is recorded as loaded from the beginning of the trace.
+    /// the rundown. The actual load time is unknown, so the code is recorded as loaded from the beginning of the trace -
+    /// or, at an address that had another method before, since that one ended (at the latest at the rundown).
     /// </summary>
-    private void ProcessMethodRundownVerbose(MethodLoadUnloadVerboseTraceData method) => RegisterMethod(method, default);
+    private void ProcessMethodRundownVerbose(MethodLoadUnloadVerboseTraceData method) => RegisterMethod(method, default, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec));
 
     private void ProcessMethodLoadVerbose(MethodLoadUnloadVerboseTraceData method)
     {
@@ -394,10 +393,11 @@ internal class UltraEventProcessor
         RegisterMethod(method, UTimeSpan.FromMilliseconds(method.TimeStampRelativeMSec));
     }
 
-    private void RegisterMethod(MethodLoadUnloadVerboseTraceData method, UTimeSpan loadTime)
+    private void RegisterMethod(MethodLoadUnloadVerboseTraceData method, UTimeSpan loadTime, UTimeSpan rundownTime = default)
     {
         var managedMethods = GetProcessState(method).CurrentProcess!.ManagedMethods;
-        managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize, loadTime);
+        // the tier of this code version (Tier0, Tier1, OSR...): the frames in it are offsets in its code, named by it
+        managedMethods.GetOrCreateManagedMethod(method.ThreadID, method.ModuleID, method.MethodID, method.MethodNamespace, method.MethodName, method.MethodSignature, method.MethodToken, method.MethodFlags, method.MethodStartAddress, (ulong)method.MethodSize, loadTime, method.OptimizationTier, rundownTime);
     }
 
     private void ProcessModuleLoadUnload(ModuleLoadUnloadTraceData data, bool isLoad, bool isDCStartStop)
@@ -579,9 +579,11 @@ internal class UltraEventProcessor
             {
                 var frame = (UAddress)address;
                 // A managed code address is resolved here and not at conversion time, because the address of a
-                // collected dynamic method is recycled: only the time of the sample can tell them apart.
-                managedMethods.TryFindMethodIndexByAddress(frame, sampleTimeInClrTime, out var managedMethodIndex);
-                var codeAddressIndex = codeAddresses.GetOrCreateAddress(frame, managedMethodIndex);
+                // collected dynamic method is recycled: only the time of the sample can tell them apart. The code range found
+                // (the method's version: its start and tier) stays with the code address, for the frame's offset and tier.
+                var codeAddressIndex = managedMethods.TryFindCodeRangeByAddress(frame, sampleTimeInClrTime, out var codeRange)
+                    ? codeAddresses.GetOrCreateAddress(frame, codeRange)
+                    : codeAddresses.GetOrCreateAddress(frame, -1);
                 callStackIt = codeAddressIndex;
                 callStackIt = ref Unsafe.Add(ref callStackIt, 1);
             }

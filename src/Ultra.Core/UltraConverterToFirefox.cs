@@ -48,6 +48,25 @@ public abstract class UltraConverterToFirefox : IDisposable
     /// </summary>
     public const int CategoryClr = 6;
 
+    /// <summary>
+    /// The name of the optimization tier of a code version of a .NET method (a frame table's implementation: one word, as ultra
+    /// report prints it in a column); null when unknown (native code). Tier0, the OSR version of a hot loop entered from Tier0, Tier1
+    /// and the instrumented versions of dynamic PGO are code blocks of their own, each with its offsets.
+    /// </summary>
+    private protected static string? TierName(Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier tier) => tier switch
+    {
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.QuickJitted => "Tier0",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.QuickJittedInstrumented => "Tier0-instr",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.OptimizedTier1 => "Tier1",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.OptimizedTier1Instrumented => "Tier1-instr",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.OptimizedTier1OSR => "OSR",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.MinOptJitted => "MinOpt",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.Optimized => "FullOpts",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.ReadyToRun => "R2R",
+        Microsoft.Diagnostics.Tracing.Parsers.Clr.OptimizationTier.PreJIT => "PreJIT",
+        _ => null,
+    };
+
     private protected UltraConverterToFirefox(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options)
     {
         TraceFiles = traceFiles;
