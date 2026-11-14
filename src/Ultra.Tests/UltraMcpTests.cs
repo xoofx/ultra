@@ -170,6 +170,11 @@ public class UltraMcpTests
 
             var report = await UltraTools.GetProfileReport(path);
             StringAssert.Contains(report, "product=McpTest");
+
+            var compact = await UltraTools.GetProfileReport(path, compact: true, detailed: true, startMs: 0, endMs: 500);
+            StringAssert.Contains(compact, "## profile");
+            StringAssert.Contains(compact, "window=[0..500]ms");
+            StringAssert.Contains(compact, "## trees");
         }
         finally
         {

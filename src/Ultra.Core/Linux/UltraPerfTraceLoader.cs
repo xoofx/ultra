@@ -361,8 +361,11 @@ internal sealed class UltraPerfTraceLoader : IDisposable
             {
                 if (ip >= PerfEventNative.PERF_CONTEXT_MAX) continue;
                 var address = (UAddress)ip;
-                managedMethods.TryFindMethodIndexByAddress(address, sampleTimeInClrTime, out var managedMethodIndex);
-                _callStack.Add(codeAddresses.GetOrCreateAddress(address, managedMethodIndex));
+                // the method that was loaded there at the time of the sample, in the version it then had (its code range: start
+                // and tier), kept with the code address for the frame's offset and tier
+                _callStack.Add(managedMethods.TryFindCodeRangeByAddress(address, sampleTimeInClrTime, out var codeRange)
+                    ? codeAddresses.GetOrCreateAddress(address, codeRange)
+                    : codeAddresses.GetOrCreateAddress(address, -1));
             }
 
             if (_callStack.Count == 0)

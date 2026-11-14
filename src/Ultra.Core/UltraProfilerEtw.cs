@@ -45,6 +45,30 @@ internal sealed class UltraProfilerEtw : UltraProfiler
     /// </summary>
     internal static TraceEventProviderOptions CreateClrProviderOptions() => new() { StacksEnabled = false };
 
+    /// <summary>
+    /// The kernel events of the profile and those with a stack: the CPU samples with theirs; with hardware counters their samples,
+    /// with a stack only for <paramref name="counterStacks"/> (--pmc-stacks): the stack walks were most of the trace, of the time to
+    /// convert it and of the cost of the counter interrupts in the app; without them a sample is the code address where it fired.
+    /// </summary>
+    internal static (KernelTraceEventParser.Keywords Events, KernelTraceEventParser.Keywords Stacks) KernelKeywords(bool hardwareCounters, bool counterStacks)
+    {
+        var events = KernelTraceEventParser.Keywords.Profile
+                     | KernelTraceEventParser.Keywords.ContextSwitch
+                     | KernelTraceEventParser.Keywords.ImageLoad
+                     | KernelTraceEventParser.Keywords.Process
+                     | KernelTraceEventParser.Keywords.Thread;
+        var stacks = KernelTraceEventParser.Keywords.Profile;
+        if (hardwareCounters)
+        {
+            events |= KernelTraceEventParser.Keywords.PMCProfile;
+            if (counterStacks)
+            {
+                stacks |= KernelTraceEventParser.Keywords.PMCProfile;
+            }
+        }
+        return (events, stacks);
+    }
+
     /// <summary>The event id of the CLR ContentionStart event (a thread starts waiting for a lock), the one event of <c>--locks</c> with a stack.</summary>
     internal const int ContentionStartEventId = 81;
 
@@ -223,7 +247,9 @@ internal sealed class UltraProfilerEtw : UltraProfiler
             {
                 if (unmergedFiles is not null)
                 {
-                    File.Delete(UltraEtwFastFilter.GetFilteredFileName(unmergedFiles[0], processList.Select(x => x.Id)));
+                    var filteredFile = UltraEtwFastFilter.GetFilteredFileName(unmergedFiles[0], processList.Select(x => x.Id));
+                    File.Delete(filteredFile);
+                    File.Delete(UltraEtwFastFilter.GetCodeVersionsFileName(filteredFile));
                     if (!ultraProfilerOptions.KeepEtlIntermediateFiles)
                     {
                         foreach (var file in unmergedFiles)
@@ -241,7 +267,9 @@ internal sealed class UltraProfilerEtw : UltraProfiler
 
                     if (ultraProfilerOptions.FastFilter)
                     {
-                        File.Delete(UltraEtwFastFilter.GetFilteredFileName(etlFinalFile, processList.Select(x => x.Id)));
+                        var filteredFile = UltraEtwFastFilter.GetFilteredFileName(etlFinalFile, processList.Select(x => x.Id));
+                        File.Delete(filteredFile);
+                        File.Delete(UltraEtwFastFilter.GetCodeVersionsFileName(filteredFile));
                     }
                 }
 
@@ -260,12 +288,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                 _userSession.CpuSampleIntervalMSec = ultraProfilerOptions.CpuSamplingIntervalInMs;
                 _userSession.StackCompression = false;
 
-                var kernelEvents = KernelTraceEventParser.Keywords.Profile
-                                   | KernelTraceEventParser.Keywords.ContextSwitch
-                                   | KernelTraceEventParser.Keywords.ImageLoad
-                                   | KernelTraceEventParser.Keywords.Process
-                                   | KernelTraceEventParser.Keywords.Thread;
-                var kernelStacks = KernelTraceEventParser.Keywords.Profile;
+                var (kernelEvents, kernelStacks) = KernelKeywords(hardwareCounters.Count > 0, ultraProfilerOptions.HardwareCounterStacks);
 
                 if (hardwareCounters.Count > 0)
                 {
@@ -291,9 +314,7 @@ internal sealed class UltraProfilerEtw : UltraProfiler
                         throw new InvalidOperationException($"Cannot select the hardware counters {string.Join(", ", hardwareCounters.Select(x => x.Name))} (too many at once, or the counters are in use by another tool): {ex.Message}", ex);
                     }
 
-                    kernelEvents |= KernelTraceEventParser.Keywords.PMCProfile;
-                    kernelStacks |= KernelTraceEventParser.Keywords.PMCProfile;
-                    (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Hardware counters: {string.Join(", ", hardwareCounters.Select(x => $"{x.Name} every {x.Interval:N0} events"))}");
+                    (ultraProfilerOptions.LogWarning ?? ultraProfilerOptions.LogProgress)?.Invoke($"Hardware counters: {string.Join(", ", hardwareCounters.Select(x => $"{x.Name} every {x.Interval:N0} events"))}{(ultraProfilerOptions.HardwareCounterStacks ? ", with the call stack of each sample" : ", each sample at the code address where it fired (no call stacks: --pmc-stacks)")}");
                 }
 
                 _kernelSession.EnableKernelProvider(kernelEvents, kernelStacks);

@@ -70,6 +70,18 @@ public sealed partial class UltraProfileReport
 
     private const string NoStack = "(no stack: not recorded on Linux and macOS)";
 
+    private const string NoHolder = "(no holder: the event names none)";
+
+    /// <summary>The threads that held the locks, the most waited on first, the waits whose event names no holder (owner 0) as one
+    /// row of them; none when no event names a holder (the runtime before .NET 8).</summary>
+    private static List<(string Holder, double Ms, long Waits)> Holders(LockTally locks)
+    {
+        if (!locks.ByOwner.Keys.Any(owner => owner != 0)) return [];
+        return locks.ByOwner.OrderByDescending(x => x.Value.Ms).ThenBy(x => x.Key)
+            .Select(x => (x.Key == 0 ? NoHolder : locks.ThreadNames.TryGetValue(x.Key, out var name) ? name : FormattableString.Invariant($"thread {x.Key}"), x.Value.Ms, x.Value.Waits))
+            .ToList();
+    }
+
     /// <summary>The lock waits of one worker, merged at the end.</summary>
     private sealed partial class LockTally
     {
@@ -101,13 +113,15 @@ public sealed partial class UltraProfileReport
 
         private static bool IsGeneric(string name) => name.Contains(" - Thread (", StringComparison.Ordinal) || name.EndsWith(']');
 
-        public void Add(string thread, GcMarkers markers, Func<int, string> waitingIn)
+        /// <summary>Adds the lock waits of a thread: with a <paramref name="window"/>, those that start in it.</summary>
+        public void Add(string thread, GcMarkers markers, Func<int, string> waitingIn, TimeWindow? window = null)
         {
             for (int i = 0; i < markers.Data.Count; i++)
             {
                 if (markers.Data[i] is not { Kind: GcMarkerKind.LockContention } marker) continue;
                 double start = markers.Start != null && i < markers.StartCount ? markers.Start[i] : double.NaN;
                 double end = markers.End != null && i < markers.EndCount ? markers.End[i] : double.NaN;
+                if (window is { } w && !w.Contains(start)) continue;
                 var ms = marker.DurationMs > 0 ? marker.DurationMs : end >= start ? end - start : 0;
 
                 Waits++;
@@ -122,11 +136,9 @@ public sealed partial class UltraProfileReport
                 var (codeMs, codeWaits) = ByCode.GetValueOrDefault(code);
                 ByCode[code] = (codeMs + ms, codeWaits + 1);
 
-                if (marker.Owner != 0)
-                {
-                    var (ownerMs, ownerWaits) = ByOwner.GetValueOrDefault(marker.Owner);
-                    ByOwner[marker.Owner] = (ownerMs + ms, ownerWaits + 1);
-                }
+                // owner 0 = the event names no holder: kept as a row of its own (NoHolder), so the holders add up to the total
+                var (ownerMs, ownerWaits) = ByOwner.GetValueOrDefault(marker.Owner);
+                ByOwner[marker.Owner] = (ownerMs + ms, ownerWaits + 1);
             }
         }
 
@@ -183,13 +195,56 @@ public sealed partial class UltraProfileReport
             Line($"  {ms,10:N1} {Share(ms),5:F1}% {waits,8:N0}  {code}");
         }
 
-        if (locks.ByOwner.Count > 0)
+        var holders = Holders(locks);
+        if (holders.Count > 0)
         {
             o.WriteLine("held by (ms waited on the locks the thread held, share, waits):");
-            foreach (var (owner, (ms, waits)) in locks.ByOwner.OrderByDescending(x => x.Value.Ms).ThenBy(x => x.Key).Take(Top))
+            foreach (var (holder, ms, waits) in holders.Take(Top))
             {
-                Line($"  {ms,10:N1} {Share(ms),5:F1}% {waits,8:N0}  {(locks.ThreadNames.TryGetValue(owner, out var name) ? name : FormattableString.Invariant($"thread {owner}"))}");
+                Line($"  {ms,10:N1} {Share(ms),5:F1}% {waits,8:N0}  {holder}");
             }
+        }
+    }
+
+    /// <summary>The lock contention in the compact text.</summary>
+    private void PrintLocksCompact(LockTally locks, TextWriter o)
+    {
+        if (locks.Waits == 0) return;
+
+        void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
+        var total = locks.TotalMs;
+
+        o.WriteLine();
+        o.WriteLine("## locks");
+        Line($"total: {Count(locks.Waits, "wait")}, {total:F1}ms waiting (max {locks.MaxMs:F2}ms){(locks.Locks.Count > 0 ? ", " + Count(locks.Locks.Count, "lock") : "")}; pct of total wait; waiting_in = first frame of the wait's stack outside the lock code");
+        var threads = locks.ByThread.OrderByDescending(x => x.Value.Ms).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("ms pct waits max_ms thread");
+        foreach (var (thread, (ms, waits, max)) in threads.Take(Top))
+        {
+            Line($"{ms:F1} {Pct(ms, total)} {waits} {max:F2} {thread}");
+        }
+        var restThreads = threads.Skip(Top).Sum(x => x.Value.Ms);
+        Omitted(o, threads.Count - Top, "thread", $"{restThreads:F1}ms = {Pct(restThreads, total)}");
+
+        var codes = locks.ByCode.OrderByDescending(x => x.Value.Ms).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("ms pct waits waiting_in");
+        foreach (var (code, (ms, waits)) in codes.Take(Top))
+        {
+            Line($"{ms:F1} {Pct(ms, total)} {waits} {(code == NoStack ? code : Fn(code))}");
+        }
+        var restCodes = codes.Skip(Top).Sum(x => x.Value.Ms);
+        Omitted(o, codes.Count - Top, "function", $"{restCodes:F1}ms = {Pct(restCodes, total)}");
+
+        var holders = Holders(locks);
+        if (holders.Count > 0)
+        {
+            o.WriteLine("ms pct waits held_by");
+            foreach (var (holder, ms, waits) in holders.Take(Top))
+            {
+                Line($"{ms:F1} {Pct(ms, total)} {waits} {holder}");
+            }
+            var restHolders = holders.Skip(Top).Sum(x => x.Ms);
+            Omitted(o, holders.Count - Top, "holder", $"{restHolders:F1}ms = {Pct(restHolders, total)}");
         }
     }
 }

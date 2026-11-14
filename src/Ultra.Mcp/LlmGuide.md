@@ -69,7 +69,17 @@ re-generated.
    root, top types, top retainers). Weighted tracks (`[counter]` of `--pmc`:
    events; `[heap]` / `[heap objects]`: bytes / objects, the call tree being
    the retention paths root -> types) are summed by weight in every
-   aggregation tool, whose header then says `weightType=...`. Then
+   aggregation tool, whose header then says `weightType=...`. `compact=true`
+   gives the short text meant for agents: `## section` headers, a `total:` line
+   with the units and the denominator of the percents, unpadded rows with the
+   name last, and an `omitted:` line per list (what the top N leaves out).
+   `detailed=true` adds call trees over the whole file, with the semantics of
+   `call_tree` / `call_tree_inverted`: top-down for the busiest threads and the
+   callers of the top functions (or of `focus=`, with its callees, over all the
+   threads), bounded by `maxDepth`, `minPercent` and `maxRows`, each with what
+   it leaves out; `collapseRecursion=true` merges the levels of recursive code
+   (a function's frames from its outermost to its innermost call are one);
+   `startMs`/`endMs` restrict the whole report. Then
    `get_profile_summary` — product, interval, CPU count, thread/sample counts.
 3. `list_threads` — hottest threads first.
 4. `call_tree <threadIndex>` — inclusive top-down merged call tree: the primary

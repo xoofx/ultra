@@ -27,4 +27,27 @@ public class UltraProfilerEtwTests
             Assert.IsTrue(keywords.HasFlag(keyword), $"{keyword} is collected");
         }
     }
+
+    /// <summary>
+    /// The kernel session: the CPU samples always with their stacks; the hardware counter samples (--pmc) without a stack unless
+    /// --pmc-stacks (Ivo 2026-11-10: the counters' stack walks were 80% of the stacks of a TOP trace and most of its conversion time;
+    /// without them a counter sample is the code address where it fired).
+    /// </summary>
+    [TestMethod]
+    public void CounterSamplesHaveAStackOnlyWithPmcStacks()
+    {
+        Assert.IsFalse(new UltraProfilerOptions().HardwareCounterStacks, "no counter stacks by default");
+
+        var (events, stacks) = UltraProfilerEtw.KernelKeywords(hardwareCounters: false, counterStacks: false);
+        Assert.IsTrue(stacks.HasFlag(KernelTraceEventParser.Keywords.Profile), "the CPU samples have their stacks");
+        Assert.IsFalse(events.HasFlag(KernelTraceEventParser.Keywords.PMCProfile), "no counters without --pmc");
+
+        (events, stacks) = UltraProfilerEtw.KernelKeywords(hardwareCounters: true, counterStacks: false);
+        Assert.IsTrue(events.HasFlag(KernelTraceEventParser.Keywords.PMCProfile), "the counter samples");
+        Assert.IsFalse(stacks.HasFlag(KernelTraceEventParser.Keywords.PMCProfile), "without their stacks");
+        Assert.IsTrue(stacks.HasFlag(KernelTraceEventParser.Keywords.Profile), "the CPU samples keep theirs");
+
+        (events, stacks) = UltraProfilerEtw.KernelKeywords(hardwareCounters: true, counterStacks: true);
+        Assert.IsTrue(events.HasFlag(KernelTraceEventParser.Keywords.PMCProfile) && stacks.HasFlag(KernelTraceEventParser.Keywords.PMCProfile), "--pmc-stacks: the counter samples with their stacks");
+    }
 }

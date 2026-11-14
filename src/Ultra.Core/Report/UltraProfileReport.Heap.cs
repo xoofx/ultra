@@ -124,4 +124,52 @@ public sealed partial class UltraProfileReport
             Line($"  {MB(bytes),10:N1} MB {Share(bytes),5:F1}%  {type}");
         }
     }
+
+    /// <summary>The GC heap snapshot in the compact text.</summary>
+    private void PrintHeapCompact(HeapTally heap, TextWriter o)
+    {
+        if (!heap.Any) return;
+
+        void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
+        static double MB(long bytes) => bytes / BytesPerMB;
+        static bool IsRoot(string name) => name.StartsWith('[');
+        var total = heap.Bytes;
+
+        o.WriteLine();
+        o.WriteLine("## heap snapshot");
+        Line($"total: {MB(total):F1}MB, {Count(heap.Objects, "object")}, {Count(heap.Paths, "retention path")} (live objects of a full blocking GC after the profiling); pct of total MB");
+        var (eventsLost, objectBlocksLost, referenceBlocksLost, unknownReferences) = (heap.Summary[2], heap.Summary[3], heap.Summary[4], heap.Summary[5]);
+        if (eventsLost > 0 || objectBlocksLost > 0 || referenceBlocksLost > 0)
+        {
+            Line($"WARNING: {eventsLost} events lost (EventPipe buffer full): {objectBlocksLost} object blocks and {referenceBlocksLost} reference blocks missing, {unknownReferences} unknown references; missing objects left out, what they held may be under [not reached from a root]");
+        }
+        else if (unknownReferences > 0)
+        {
+            Line($"WARNING: {unknownReferences} references missing without events lost: some retention paths are wrong");
+        }
+
+        o.WriteLine("MB pct root");
+        foreach (var (root, bytes) in heap.BytesByRoot.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
+        {
+            Line($"{MB(bytes):F1} {Pct(bytes, total)} {root}");
+        }
+
+        var types = heap.BytesByType.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("MB pct objects type");
+        foreach (var (type, bytes) in types.Take(Top))
+        {
+            Line($"{MB(bytes):F1} {Pct(bytes, total)} {heap.ObjectsByType.GetValueOrDefault(type)} {type}");
+        }
+        var restTypes = types.Skip(Top).Sum(x => x.Value);
+        Omitted(o, types.Count - Top, "type", $"{MB(restTypes):F1}MB = {Pct(restTypes, total)}");
+
+        // A path holds its bytes through every type on it: the shares overlap, the rest has no meaningful sum
+        var retainers = heap.BytesThrough.Where(x => !IsRoot(x.Key)).OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("MB pct retainer (bytes on the shortest paths from a root through the type; shares overlap)");
+        foreach (var (type, bytes) in retainers.Take(Top))
+        {
+            Line($"{MB(bytes):F1} {Pct(bytes, total)} {type}");
+        }
+        o.WriteLine(retainers.Count > Top ? "omitted: " + Count(retainers.Count - Top, "type") + " (shares overlap: no sum)" : "omitted: none");
+    }
 }

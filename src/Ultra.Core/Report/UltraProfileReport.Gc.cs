@@ -207,8 +207,12 @@ public sealed partial class UltraProfileReport
 
         public bool Any => Collections.Sum() > 0 || Suspensions > 0 || AllocationTicks > 0 || HeapMax > 0;
 
-        /// <summary>Adds the GC markers of a thread; its allocations only when <paramref name="allocations"/> (the thread filter).</summary>
-        public void Add(string thread, string[] strings, GcMarkers markers, bool allocations)
+        /// <summary>
+        /// Adds the GC markers of a thread; its allocations only when <paramref name="allocations"/> (the thread filter). With a
+        /// <paramref name="window"/>, the markers that start in it (all the restarts: a suspension in the window is paired with the
+        /// restart after it).
+        /// </summary>
+        public void Add(string thread, string[] strings, GcMarkers markers, bool allocations, TimeWindow? window = null)
         {
             for (int i = 0; i < markers.Data.Count; i++)
             {
@@ -224,6 +228,7 @@ public sealed partial class UltraProfileReport
                 double start = markers.Start != null && i < markers.StartCount ? markers.Start[i] : double.NaN;
                 double end = markers.End != null && i < markers.EndCount ? markers.End[i] : double.NaN;
                 double ms = end >= start ? end - start : 0;   // false for NaN
+                if (window is { } w && marker.Kind != GcMarkerKind.Restart && !w.Contains(start)) continue;
                 switch (marker.Kind)
                 {
                     case GcMarkerKind.Collection:
@@ -374,11 +379,12 @@ public sealed partial class UltraProfileReport
             Line($"  reasons: {string.Join(", ", gc.Reasons.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Select(x => FormattableString.Invariant($"{x.Key} {x.Value:N0}")))}");
         }
 
+        var duration = DurationMs(meta);
         var (pauses, otherPauses) = gc.Pauses();
         if (pauses.Count > 0)
         {
             var total = pauses.Sum();
-            Line($"  GC pauses (managed threads stopped): {pauses.Count:N0}, {total:F1} ms = {total * 100 / Math.Max(1, meta.DurationMs):F2}% of the {meta.DurationMs / 1000:F1} s, longest {pauses.Max():F2} ms, of which {gc.SuspendMs:F1} ms suspending the threads (longest {gc.SuspendMaxMs:F2} ms)");
+            Line($"  GC pauses (managed threads stopped): {pauses.Count:N0}, {total:F1} ms = {total * 100 / Math.Max(1, duration):F2}% of the {duration / 1000:F1} s, longest {pauses.Max():F2} ms, of which {gc.SuspendMs:F1} ms suspending the threads (longest {gc.SuspendMaxMs:F2} ms)");
         }
         else if (gc.Suspensions > 0)
         {
@@ -412,7 +418,7 @@ public sealed partial class UltraProfileReport
         double Share(long bytes) => allocated > 0 ? bytes * 100.0 / allocated : 0;
         var kinds = string.Join(", ", gc.AllocationsByKind.OrderByDescending(x => x.Value).Select(x => FormattableString.Invariant($"{x.Key} {MB(x.Value):N1} MB")));
         o.WriteLine();
-        Line($"allocations: about {MB(allocated):N1} MB = {MB(allocated) / Math.Max(0.001, meta.DurationMs / 1000):N1} MB/s, from {gc.AllocationTicks:N0} allocation ticks ({kinds}); the runtime samples one allocation about every 100 KB, so the types are estimates");
+        Line($"allocations: about {MB(allocated):N1} MB = {MB(allocated) / Math.Max(0.001, duration / 1000):N1} MB/s, from {gc.AllocationTicks:N0} allocation ticks ({kinds}); the runtime samples one allocation about every 100 KB, so the types are estimates");
         o.WriteLine("per thread (MB allocated, share, ticks):");
         var threads = gc.AllocationsByThread.OrderByDescending(x => x.Value.Bytes).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
         foreach (var (name, (bytes, ticks)) in threads.Take(Top))
@@ -430,5 +436,82 @@ public sealed partial class UltraProfileReport
         {
             Line($"  {MB(bytes),10:N1} MB {Share(bytes),5:F1}% {ticks,9:N0}  {type}");
         }
+    }
+
+    /// <summary>The GC and the allocations in the compact text.</summary>
+    private void PrintGcCompact(ProfileMeta meta, GcTally gc, TextWriter o)
+    {
+        void Line(FormattableString text) => o.WriteLine(text.ToString(CultureInfo.InvariantCulture));
+        static double MB(long bytes) => bytes / BytesPerMB;
+        var duration = DurationMs(meta);
+
+        o.WriteLine();
+        o.WriteLine("## gc");
+        if (!gc.Any)
+        {
+            o.WriteLine("none: no GC or allocation events (not a .NET process, or no CLR events)");
+            return;
+        }
+
+        var collections = gc.Collections.Sum();
+        if (collections == 0) o.WriteLine("collections: 0");
+        else Line($"collections: {collections} (gen0 {gc.Collections[0]}, gen1 {gc.Collections[1]}, gen2 {gc.Collections[2]}, background {gc.Background})");
+        if (gc.Reasons.Count > 0)
+        {
+            Line($"reasons: {string.Join(", ", gc.Reasons.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Select(x => FormattableString.Invariant($"{x.Key} {x.Value}")))}");
+        }
+        var (pauses, otherPauses) = gc.Pauses();
+        if (pauses.Count > 0)
+        {
+            var total = pauses.Sum();
+            Line($"gc pauses (managed threads stopped): {pauses.Count}, {total:F1}ms = {total * 100 / Math.Max(1, duration):F2}% of {duration / 1000:F1}s, max {pauses.Max():F2}ms; suspending {gc.SuspendMs:F1}ms (max {gc.SuspendMaxMs:F2}ms)");
+        }
+        else if (gc.Suspensions > 0)
+        {
+            Line($"gc suspensions: {gc.Suspensions}, {gc.SuspendMs:F1}ms (max {gc.SuspendMaxMs:F2}ms)");
+        }
+        if (otherPauses.Count > 0)
+        {
+            Line($"other runtime pauses (not gc): {otherPauses.Count}, {otherPauses.Sum():F1}ms, max {otherPauses.Max():F2}ms");
+        }
+        if (collections > 0)
+        {
+            Line($"blocking gc: {gc.BlockingMs:F1}ms (max {gc.BlockingMaxMs:F2}ms){(gc.Background > 0 ? FormattableString.Invariant($"; background gc: {gc.BackgroundMs:F1}ms beside the program") : "")}");
+        }
+        if (gc.HeapMax > 0)
+        {
+            var g = gc.HeapMaxGenerations;
+            long Gen(int i) => i < g.Length ? g[i] : 0;
+            Line($"heap after gc: max {MB(gc.HeapMax):F1}MB (gen0 {MB(Gen(0)):F1}, gen1 {MB(Gen(1)):F1}, gen2 {MB(Gen(2)):F1}, LOH {MB(Gen(3)):F1}, POH {MB(Gen(4)):F1} MB), last {MB(gc.HeapLast):F1}MB");
+        }
+
+        o.WriteLine();
+        o.WriteLine("## allocations");
+        if (gc.AllocationTicks == 0)
+        {
+            o.WriteLine(ThreadFilter != null ? "none: no allocation ticks in the threads of the filter" : "none: no allocation ticks");
+            return;
+        }
+
+        var allocated = gc.AllocatedBytes;
+        var kinds = string.Join(", ", gc.AllocationsByKind.OrderByDescending(x => x.Value).Select(x => FormattableString.Invariant($"{x.Key} {MB(x.Value):F1}MB")));
+        Line($"total: {MB(allocated):F1}MB = {MB(allocated) / Math.Max(0.001, duration / 1000):F1}MB/s, {Count(gc.AllocationTicks, "tick")} (1 per ~100KB allocated: types are estimates), {kinds}; pct of total MB");
+        var threads = gc.AllocationsByThread.OrderByDescending(x => x.Value.Bytes).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("MB pct ticks thread");
+        foreach (var (name, (bytes, ticks)) in threads.Take(Top))
+        {
+            Line($"{MB(bytes):F1} {Pct(bytes, allocated)} {ticks} {name}");
+        }
+        var restThreads = threads.Skip(Top).Sum(x => x.Value.Bytes);
+        Omitted(o, threads.Count - Top, "thread", $"{MB(restThreads):F1}MB = {Pct(restThreads, allocated)}");
+
+        var types = gc.AllocationsByType.OrderByDescending(x => x.Value.Bytes).ThenBy(x => x.Key, StringComparer.Ordinal).ToList();
+        o.WriteLine("MB pct ticks type");
+        foreach (var (type, (bytes, ticks)) in types.Take(Top))
+        {
+            Line($"{MB(bytes):F1} {Pct(bytes, allocated)} {ticks} {type}");
+        }
+        var restTypes = types.Skip(Top).Sum(x => x.Value.Bytes);
+        Omitted(o, types.Count - Top, "type", $"{MB(restTypes):F1}MB = {Pct(restTypes, allocated)}");
     }
 }

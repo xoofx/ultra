@@ -3,7 +3,6 @@
 // See license.txt file in the project root for full license information.
 
 using System.Runtime.InteropServices;
-using ByteSizeLib;
 using Microsoft.Diagnostics.Symbols;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Etlx;
@@ -27,23 +26,35 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
     private readonly Dictionary<ModuleFileIndex, int> _mapModuleFileIndexToFirefox;
     private readonly HashSet<ModuleFileIndex> _setManagedModules;
     private readonly SymbolReader _symbolReader;
+    private readonly UltraSymbolServerGuard? _symbolGuard;   // null: --symbol-timeout 0, TraceEvent's own waiting
     private readonly TraceLog _traceLog;
     private ModuleFileIndex _clrJitModuleIndex = ModuleFileIndex.Invalid;
     private ModuleFileIndex _coreClrModuleIndex = ModuleFileIndex.Invalid;
     private int _profileThreadIndex;
     private Dictionary<int, (string Name, int Interval)>? _counterSources;
     private readonly HashSet<int> _counterSourcesWithSamples = new();
+    private UltraEtwCodeVersions _codeVersions = UltraEtwCodeVersions.Empty;   // of the process being converted
+    private readonly ILookup<int, UltraEtwFastFilter.CodeVersion> _filteredCodeVersions;   // by process: the rundown's too (see UltraEtwFastFilter)
 
     public UltraConverterToFirefoxEtw(List<UltraProfilerTraceFile> traceFiles, UltraProfilerOptions options) : base(traceFiles, options)
     {
         _traceLog = TraceLog.OpenOrConvert(traceFiles[0].FileName);
+        _filteredCodeVersions = UltraEtwFastFilter.ReadCodeVersions(traceFiles[0].FileName).ToLookup(x => x.ProcessId);
 
         ProfilerResult = CreateProfile();
 
         var symbolPath = options.GetCachedSymbolPath();
         var symbolPathText = symbolPath.ToString();
 
-        _symbolReader = new SymbolReader(TextWriter.Null, symbolPathText);
+        // A symbol server that does not answer is skipped after its first timeout instead of being waited for module after module
+        // (UltraSymbolServerGuard); the reader owns and disposes the handler
+        if (options.SymbolServerTimeoutInSeconds > 0)
+        {
+            _symbolGuard = new UltraSymbolServerGuard(TimeSpan.FromSeconds(options.SymbolServerTimeoutInSeconds),
+                serverOut: text => (Options.LogWarning ?? Options.LogProgress)?.Invoke($"Warning: symbol server {text}; it is skipped for the modules that follow"));
+        }
+
+        _symbolReader = new SymbolReader(TextWriter.Null, symbolPathText, _symbolGuard);
         _symbolReader.Options = SymbolReaderOptions.None;
         _symbolReader.SecurityCheck = (pdbPath) => true;
 
@@ -196,6 +207,9 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         Options.LogProgress?.Invoke($"Reading Events for {threads.Count} Threads");
         var threadSetNames = new Dictionary<int, string>();
         var convertersByThreadId = threadConverters.ToLookup(x => x.ThreadId);
+        // The code versions read by the fast filter, the rundown's included (TraceLog does not write the rundown to the ETLX)
+        var codeVersions = _filteredCodeVersions[process.ProcessID].ToList();
+        var readCodeVersionsFromEtlx = codeVersions.Count == 0;
         foreach (var evt in _traceLog.Events.FilterByTime(process.StartTimeRelativeMsec, process.EndTimeRelativeMsec))
         {
             if (evt.Opcode == (TraceEventOpcode) 0x24 && evt is CSwitchTraceData switchOut && switchOut.OldThreadID != evt.ThreadID && convertersByThreadId.Contains(switchOut.OldThreadID))
@@ -209,6 +223,14 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             if (evt.ProcessID != process.ProcessID)
             {
                 continue;
+            }
+
+            // The code versions of the methods (each tier, OSR, instrumented: a code block of its own) from their load and unload
+            // events in the ETLX when there is no sidecar (e.g. --nofilter). The fast filter already kept these events along with
+            // the rundown, so do not add them twice. The frames are converted after this pass.
+            if (readCodeVersionsFromEtlx && evt is MethodLoadUnloadTraceDataBase methodCode && methodCode.MethodStartAddress != 0 && methodCode.MethodSize > 0)
+            {
+                codeVersions.Add(UltraEtwFastFilter.CodeVersionOf(methodCode));
             }
 
             if (evt is ThreadSetNameTraceData threadSetName)
@@ -234,6 +256,8 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         {
             _counterSources = ReadCounterSources(counterSourceIds.Union(_counterSources?.Keys ?? Enumerable.Empty<int>()));
         }
+
+        _codeVersions = new UltraEtwCodeVersions(codeVersions, process.StartTimeRelativeMsec, process.EndTimeRelativeMsec);
 
         // Each thread has its own Firefox tables and only reads the TraceLog, so threads are converted in parallel
         Options.LogProgress?.Invoke($"Converting Events for {threads.Count} Threads");
@@ -733,13 +757,12 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         _coreClrModuleIndex = ModuleFileIndex.Invalid;
 
         var allModules = process.LoadedModules.ToList();
+        var withSamples = new List<TraceLoadedModule>();   // the modules to look symbols up for, after the loop
         for (var i = 0; i < allModules.Count; i++)
         {
             var module = allModules[i];
             if (!_mapModuleFileIndexToFirefox.ContainsKey(module.ModuleFile.ModuleFileIndex))
             {
-                Options.LogStepProgress?.Invoke($"Loading Symbols [{i}/{allModules.Count}] for Module `{module.Name}`, ImageSize: {ByteSize.FromBytes(module.ModuleFile.ImageSize)}");
-
                 var lib = new FirefoxProfiler.Lib
                 {
                     Name = module.Name,
@@ -755,7 +778,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                 // No sampled stack has an address in this module: no symbols to look up (and no PDB to download)
                 if (module.ModuleFile.CodeAddressesInModule > 0)
                 {
-                    _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile);
+                    withSamples.Add(module);
                 }
 
                 _mapModuleFileIndexToFirefox.Add(module.ModuleFile.ModuleFileIndex, ProfilerResult.Libs.Count);
@@ -784,6 +807,21 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                     }
                 }
             }
+        }
+
+        // The symbols, module by module, and once more at the end for those a symbol server did not answer for
+        // (UltraSymbolLookup.Run). Nothing of the loop above depends on them.
+        if (withSamples.Count > 0)
+        {
+            var summary = UltraSymbolLookup.Run(withSamples,
+                module => module.Name,
+                module => _traceLog!.CodeAddresses.LookupSymbolsForModule(_symbolReader, module.ModuleFile),
+                _symbolGuard,
+                // the reader remembers the PDBs it did not find: setting its path, to the same, makes it forget
+                forgetFailures: () => _symbolReader.SymbolPath = _symbolReader.SymbolPath,
+                progress: Options.LogProgress,
+                step: Options.LogStepProgress);
+            Options.LogProgress?.Invoke(summary.ToString());
         }
     }
 
@@ -835,7 +873,12 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         private readonly Dictionary<MethodIndex, int> _mapMethodIndexToFirefox;
         private readonly Dictionary<string, int> _mapStringToFirefox;
         private FirefoxProfiler.Thread? _profileThread;
-        private readonly Dictionary<int, List<(double Time, CallStackIndex CallStackIndex)>> _counterItems = new();
+        // A counter sample: its call stack (--pmc-stacks), else the code address where the counter fired (Invalid stack)
+        private readonly Dictionary<int, List<(double Time, CallStackIndex CallStackIndex, CodeAddressIndex CodeAddressIndex)>> _counterItems = new();
+        // The one-frame Firefox stack of a code address, for the counter samples without a stack (per Firefox thread, as the others)
+        private readonly Dictionary<CodeAddressIndex, int> _mapLeafCodeAddressToFirefox = new();
+        // The time (ms) of the sample or marker whose stack is being converted: which code version its frames were in
+        private double _frameTime;
 
         // gcStartEventsByCount: the collections started and not ended yet in the process, by GC count; shared by its threads, as a
         // background GC starts on the thread that triggers it and ends on the background GC thread
@@ -916,8 +959,11 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             {
                 if (evt.ProcessID == thread.Process.ProcessID && evt.ThreadID == thread.ThreadID)
                 {
+                    // With --pmc-stacks the sample's stack; without (the default) the code address of its instruction pointer, which
+                    // TraceLog resolves like a stack frame (PMCCounterProfTraceData logs it as a code address)
                     var pmcCallStackIndex = evt.CallStackIndex();
-                    if (pmcCallStackIndex != CallStackIndex.Invalid)
+                    var pmcCodeAddressIndex = pmcCallStackIndex == CallStackIndex.Invalid ? pmc.IntructionPointerCodeAddressIndex() : CodeAddressIndex.Invalid;
+                    if (pmcCallStackIndex != CallStackIndex.Invalid || pmcCodeAddressIndex != CodeAddressIndex.Invalid)
                     {
                         var sourceId = pmc.ProfileSource;
                         if (!_counterItems.TryGetValue(sourceId, out var counterItems))
@@ -925,7 +971,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                             counterItems = new();
                             _counterItems.Add(sourceId, counterItems);
                         }
-                        counterItems.Add((timeStamp, pmcCallStackIndex));
+                        counterItems.Add((timeStamp, pmcCallStackIndex, pmcCodeAddressIndex));
                     }
                 }
                 return;
@@ -1183,6 +1229,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                             var callStackIndex = (CallStackIndex)contention.PendingCallStack;
                             if (_traceLog.CallStacks.ThreadIndex(callStackIndex) == thread.ThreadIndex)
                             {
+                                _frameTime = item.Time;
                                 contention.CauseStack = ConvertCallStack(callStackIndex);
                             }
                             contention.PendingCallStack = -1;
@@ -1205,6 +1252,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                         }
 
                         // Add sample
+                        _frameTime = item.Time;
                         var firefoxCallStackIndex = ConvertCallStack(item.CallStackIndex);
 
                         var deltaTime = item.Time - startTime;
@@ -1271,6 +1319,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                 _mapMethodIndexToFirefox.Clear();
                 _mapStringToFirefox.Clear();
                 _mapCodeAddressIndexToMethodIndexFirefox.Clear();
+                _mapLeafCodeAddressToFirefox.Clear();
 
                 var samples = counterThread.Samples;
                 samples.TimeDeltas = new List<double>();
@@ -1278,15 +1327,17 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
                 samples.WeightType = "samples";
 
                 double previousTime = 0;
-                foreach (var (time, callStackIndex) in items)
+                foreach (var (time, callStackIndex, codeAddressIndex) in items)
                 {
-                    if (_traceLog.CallStacks.ThreadIndex(callStackIndex) != thread.ThreadIndex)
+                    // a stack of another thread is not this one's (a sample without a stack was read for this thread's id)
+                    if (callStackIndex != CallStackIndex.Invalid && _traceLog.CallStacks.ThreadIndex(callStackIndex) != thread.ThreadIndex)
                     {
                         continue;
                     }
 
                     samples.TimeDeltas.Add(time - previousTime);
-                    samples.Stack.Add(ConvertCallStack(callStackIndex));
+                    _frameTime = time;
+                    samples.Stack.Add(callStackIndex != CallStackIndex.Invalid ? ConvertCallStack(callStackIndex) : ConvertLeafCodeAddress(codeAddressIndex));
                     samples.Weight.Add(interval);
                     samples.Length++;
                     previousTime = time;
@@ -1301,6 +1352,32 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             _mapMethodIndexToFirefox.Clear();
             _mapStringToFirefox.Clear();
             _mapCodeAddressIndexToMethodIndexFirefox.Clear();
+            _mapLeafCodeAddressToFirefox.Clear();
+        }
+
+        /// <summary>
+        /// The one-frame Firefox stack of a code address: a counter sample recorded without its stack (no --pmc-stacks), at the code
+        /// address where the counter fired. Its frame is the frame of that address in a stack (same function, offset and code version).
+        /// </summary>
+        private int ConvertLeafCodeAddress(CodeAddressIndex codeAddressIndex)
+        {
+            if (_mapLeafCodeAddressToFirefox.TryGetValue(codeAddressIndex, out var index))
+            {
+                return index;
+            }
+
+            var stackTable = _profileThread!.StackTable;
+            index = stackTable.Length;
+            _mapLeafCodeAddressToFirefox.Add(codeAddressIndex, index);
+
+            var frameTableIndex = ConvertFrame(codeAddressIndex, out var category, out var subCategory);
+            stackTable.Frame.Add(frameTableIndex);
+            stackTable.Category.Add(category);
+            stackTable.Subcategory.Add(subCategory);
+            stackTable.Prefix.Add(null);
+            stackTable.Length++;
+
+            return index;
         }
 
         /// <summary>
@@ -1375,6 +1452,33 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             var absoluteAddress = _traceLog.CodeAddresses.Address(codeAddressIndex);
             var offsetIntoModule = module is not null ? (int)(absoluteAddress - module.ImageBase) : 0;
 
+            // JIT'd code is not in its module's image, so the offset into the module was an arbitrary distance cut to 32 bits: the
+            // offset from the start of the frame's code version instead, as the Linux converter does, which matches the offsets of a
+            // DOTNET_JitDisasm listing and compares across runs of the same build. The version's optimization tier (Tier0, Tier1,
+            // OSR...) goes in the frame's implementation, so that the versions of a method keep their offsets apart.
+            // A frame is named by its version only when its offset is in the version's code: a JIT'd frame whose version is not known
+            // (with --nofilter, a method compiled before the profiling) keeps the offset into the module, unnamed.
+            // The version is the one that was at the address when the frame was sampled (_frameTime): the memory of an unloaded
+            // method is used again by another. TraceLog gives an address that was sampled after such an unload a code address of its
+            // own, so the first sample of a code address tells for all of them.
+            var tier = OptimizationTier.Unknown;
+            if (_converter._codeVersions.TryFind(absoluteAddress, _frameTime, out var codeStart, out tier))
+            {
+                offsetIntoModule = (int)(absoluteAddress - codeStart);
+                if (tier == OptimizationTier.Unknown)
+                {
+                    tier = _traceLog.CodeAddresses.OptimizationTier(codeAddressIndex);
+                }
+            }
+            // Precompiled (ReadyToRun) code, the framework's mostly, has no load event: .NET code inside its module's image can only be
+            // that (JIT'd code is never in an image). Its offset into the image stays: real, and the same for every run of the image.
+            else if (module is not null && module.ImageSize > 0 && _converter._setManagedModules.Contains(module.ModuleFileIndex)
+                && absoluteAddress >= module.ImageBase && absoluteAddress - module.ImageBase < (ulong)module.ImageSize)
+            {
+                tier = OptimizationTier.ReadyToRun;
+            }
+            var tierName = TierName(tier);
+
             // Address
             // InlineDepth
             // Category
@@ -1443,7 +1547,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             // Set other fields to null
             frameTable.NativeSymbol.Add(null);
             frameTable.InnerWindowID.Add(null);
-            frameTable.Implementation.Add(null);
+            frameTable.Implementation.Add(tierName is null ? null : GetOrCreateString(tierName));
 
             //var sourceLine = log.CodeAddresses.GetSourceLine(_symbolReader, codeAddressIndex);
             //if (sourceLine != null)
