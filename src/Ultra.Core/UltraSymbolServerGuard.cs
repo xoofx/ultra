@@ -198,12 +198,15 @@ internal sealed class UltraSymbolServerGuard : DelegatingHandler
 
 /// <summary>What <see cref="UltraSymbolLookup.Run{T}"/> did.</summary>
 /// <param name="Modules">the modules looked up</param>
-/// <param name="NotFound">the names of those the servers were asked for and that got no PDB, the retry included</param>
+/// <param name="NotFound">the names of those every server answered without a PDB, the retry included</param>
 /// <param name="Retried">the modules looked up a second time</param>
 /// <param name="FoundOnRetry">of those, the ones that got their PDB then</param>
 /// <param name="Seconds">the time of it all</param>
 internal readonly record struct UltraSymbolLookupSummary(int Modules, IReadOnlyList<string> NotFound, int Retried, int FoundOnRetry, double Seconds)
 {
+    /// <summary>The modules still unresolved because a server failed or did not answer on retry.</summary>
+    public IReadOnlyList<string> Incomplete { get; init; } = [];
+
     /// <summary>One line for the log, the same text whatever the culture of the machine (0.0s, not 0,0s).</summary>
     public override string ToString()
     {
@@ -214,6 +217,12 @@ internal readonly record struct UltraSymbolLookupSummary(int Modules, IReadOnlyL
             const int listed = 12;
             text += $"; {NotFound.Count} not on the symbol servers (their frames stay module!0xADDRESS): {string.Join(", ", NotFound.Take(listed))}";
             if (NotFound.Count > listed) text += $" and {NotFound.Count - listed} more";
+        }
+        if (Incomplete.Count > 0)
+        {
+            const int listed = 12;
+            text += $"; {Incomplete.Count} unresolved because a symbol server did not answer (their frames stay module!0xADDRESS): {string.Join(", ", Incomplete.Take(listed))}";
+            if (Incomplete.Count > listed) text += $" and {Incomplete.Count - listed} more";
         }
 
         return text;
@@ -243,6 +252,7 @@ internal static class UltraSymbolLookup
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var notFound = new List<string>();
+        var incomplete = new List<string>();
         List<T>? again = null;
         for (var i = 0; i < modules.Count; i++)
         {
@@ -259,16 +269,23 @@ internal static class UltraSymbolLookup
             progress?.Invoke($"Retrying the symbols of {again.Count} module{(again.Count == 1 ? "" : "s")} once: a symbol server did not answer ({string.Join(", ", guard.ServersOut)})");
             guard.Resume();
             forgetFailures?.Invoke();
+            // Start with the modules skipped after the failure. Retrying the module that took a server out first would
+            // let one slow PDB disable that server again before any of the later modules can ask it for their own PDBs.
+            again.Reverse();
             for (var i = 0; i < again.Count; i++)
             {
                 var module = again[i];
                 step?.Invoke($"Loading Symbols, retry [{i + 1}/{again.Count}] for Module `{nameOf(module)}`");
-                if (One(module) == UltraSymbolServerGuard.Outcome.Found) foundOnRetry++;
-                else notFound.Add(nameOf(module));
+                switch (One(module))
+                {
+                    case UltraSymbolServerGuard.Outcome.Found: foundOnRetry++; break;
+                    case UltraSymbolServerGuard.Outcome.NotFound: notFound.Add(nameOf(module)); break;
+                    case UltraSymbolServerGuard.Outcome.Incomplete: incomplete.Add(nameOf(module)); break;
+                }
             }
         }
 
-        return new UltraSymbolLookupSummary(modules.Count, notFound, again?.Count ?? 0, foundOnRetry, clock.Elapsed.TotalSeconds);
+        return new UltraSymbolLookupSummary(modules.Count, notFound, again?.Count ?? 0, foundOnRetry, clock.Elapsed.TotalSeconds) { Incomplete = incomplete };
 
         UltraSymbolServerGuard.Outcome One(T module)
         {

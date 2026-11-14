@@ -246,18 +246,46 @@ public class UltraSymbolServerGuardTests
 
         // "late" and "never" hit the server that hangs ("late" pays the one timeout, "never" and "gone" find it out);
         // all three were not told no by every server, so all three are asked again - once
-        CollectionAssert.AreEqual(new[] { "local", "late", "never", "gone", "late", "never", "gone" }, lookups);
+        CollectionAssert.AreEqual(new[] { "local", "late", "never", "gone", "gone", "never", "late" }, lookups);
         Assert.AreEqual(1, forgotten);
         Assert.AreEqual(4, summary.Modules);
         Assert.AreEqual(3, summary.Retried);
         Assert.AreEqual(1, summary.FoundOnRetry);
-        CollectionAssert.AreEqual(new[] { "never", "gone" }, summary.NotFound.ToArray());
+        CollectionAssert.AreEquivalent(new[] { "never", "gone" }, summary.NotFound.ToArray());
         Assert.AreEqual(4, servers.ReachedOf("slow.test"), "the first pass reached the hanging server once, the retry three times");
         Assert.AreEqual("Retrying the symbols of 3 modules once: a symbol server did not answer (slow.test)", progress.Single(x => x.StartsWith("Retrying")));
         CollectionAssert.Contains(steps, "Loading Symbols [1/4] for Module `local`");
-        CollectionAssert.Contains(steps, "Loading Symbols, retry [3/3] for Module `gone`");
+        CollectionAssert.Contains(steps, "Loading Symbols, retry [3/3] for Module `late`");
         StringAssert.Contains(summary.ToString(), "Symbols of 4 modules looked up in ");
-        StringAssert.Contains(summary.ToString(), "; 3 a second time after a symbol server did not answer, 1 found then; 2 not on the symbol servers (their frames stay module!0xADDRESS): never, gone");
+        StringAssert.Contains(summary.ToString(), "; 3 a second time after a symbol server did not answer, 1 found then; 2 not on the symbol servers (their frames stay module!0xADDRESS): gone, never");
+    }
+
+    [TestMethod]
+    public void ASlowPdbDoesNotBlockTheOtherModulesOnRetry()
+    {
+        var servers = new FakeServers();
+        servers.Hosts["symbols.test"] = (request, token) => request.RequestUri!.AbsolutePath.Contains("slow")
+            ? FakeServers.Hang(request, token)
+            : FakeServers.Status(HttpStatusCode.OK)(request, token);
+        var guard = new UltraSymbolServerGuard(Short, servers);
+        using var client = new HttpMessageInvoker(guard);
+        var found = new List<string>();
+        void Lookup(string module)
+        {
+            try
+            {
+                using var response = Get(client, $"http://symbols.test/{module}.pdb").GetAwaiter().GetResult();
+                if (response.IsSuccessStatusCode) found.Add(module);
+            }
+            catch (TimeoutException) { }
+        }
+
+        var summary = UltraSymbolLookup.Run(["slow", "good1", "good2"], x => x, Lookup, guard);
+
+        CollectionAssert.AreEquivalent(new[] { "good1", "good2" }, found);
+        Assert.AreEqual(2, summary.FoundOnRetry);
+        Assert.AreEqual(0, summary.NotFound.Count, "a timeout does not prove the PDB is absent");
+        StringAssert.Contains(summary.ToString(), "unresolved because a symbol server did not answer");
     }
 
     [TestMethod]
