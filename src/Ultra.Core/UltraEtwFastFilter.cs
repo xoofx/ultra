@@ -206,6 +206,16 @@ internal static class UltraEtwFastFilter
 
     // "UCV2": the format of the code versions file (UCV1 had no method, time and event: such a file is not read, its ETLX is filtered again)
     private const int CodeVersionsMagic = 0x32564355;
+    private const int CodeVersionRecordSize = sizeof(int) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(long) + sizeof(double) + sizeof(byte);
+
+    private static bool TryReadCodeVersionsHeader(BinaryReader reader, out int count)
+    {
+        count = 0;
+        if (reader.BaseStream.Length < 8 || reader.ReadInt32() != CodeVersionsMagic) return false;
+        count = reader.ReadInt32();
+        // A killed conversion can leave a valid header followed by an incomplete record. Do not reuse its ETLX or read past EOF.
+        return count >= 0 && reader.BaseStream.Length == 8L + (long)count * CodeVersionRecordSize;
+    }
 
     internal static void WriteCodeVersions(string file, List<CodeVersion> versions)
     {
@@ -230,7 +240,7 @@ internal static class UltraEtwFastFilter
         try
         {
             using var reader = new BinaryReader(File.OpenRead(GetCodeVersionsFileName(filteredFile)));
-            return reader.BaseStream.Length >= 8 && reader.ReadInt32() == CodeVersionsMagic;
+            return TryReadCodeVersionsHeader(reader, out _);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -248,8 +258,7 @@ internal static class UltraEtwFastFilter
         var versions = new List<CodeVersion>();
         if (!File.Exists(file)) return versions;
         using var reader = new BinaryReader(File.OpenRead(file));
-        if (reader.BaseStream.Length < 8 || reader.ReadInt32() != CodeVersionsMagic) return versions;
-        var count = reader.ReadInt32();
+        if (!TryReadCodeVersionsHeader(reader, out var count)) return versions;
         for (int i = 0; i < count; i++)
         {
             versions.Add(new CodeVersion(reader.ReadInt32(), reader.ReadUInt64(), reader.ReadInt32(), (OptimizationTier)reader.ReadInt32(),

@@ -30,15 +30,22 @@ internal sealed class UltraEtwCodeVersions
     public static readonly UltraEtwCodeVersions Empty = new([]);
 
     public UltraEtwCodeVersions(IEnumerable<UltraEtwFastFilter.CodeVersion> events)
+        : this(events, double.NegativeInfinity, double.PositiveInfinity)
     {
-        var sorted = events.ToList();
+    }
+
+    /// <summary>Only the events of this process lifetime: a PID can name several processes in one trace.</summary>
+    public UltraEtwCodeVersions(IEnumerable<UltraEtwFastFilter.CodeVersion> events, double startMs, double endMs)
+    {
+        var sorted = events.Where(e => e.TimeMs >= startMs && e.TimeMs <= endMs).ToList();
         sorted.Sort(static (a, b) =>
         {
             var order = a.Start.CompareTo(b.Start);
             if (order == 0) order = a.TimeMs.CompareTo(b.TimeMs);
             if (order == 0) order = OrderAtOneTime(a.Event).CompareTo(OrderAtOneTime(b.Event));
             if (order == 0) order = a.MethodId.CompareTo(b.MethodId);
-            return order != 0 ? order : a.Size.CompareTo(b.Size);
+            if (order == 0) order = a.Size.CompareTo(b.Size);
+            return order != 0 ? order : a.Tier.CompareTo(b.Tier);
         });
 
         var starts = new List<ulong>(sorted.Count);
@@ -53,6 +60,9 @@ internal sealed class UltraEtwCodeVersions
         for (var i = 0; i < sorted.Count; i++)
         {
             var e = sorted[i];
+            // The same event can come from both the sidecar and ETLX. In particular, a repeated unload must not create a
+            // second version with an empty lifetime that can win the nearest-in-time fallback.
+            if (i > 0 && e == sorted[i - 1]) continue;
             if (i == 0 || e.Start != sorted[i - 1].Start)
             {
                 open = -1;

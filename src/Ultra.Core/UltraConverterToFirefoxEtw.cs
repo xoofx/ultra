@@ -209,6 +209,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
         var convertersByThreadId = threadConverters.ToLookup(x => x.ThreadId);
         // The code versions read by the fast filter, the rundown's included (TraceLog does not write the rundown to the ETLX)
         var codeVersions = _filteredCodeVersions[process.ProcessID].ToList();
+        var readCodeVersionsFromEtlx = codeVersions.Count == 0;
         foreach (var evt in _traceLog.Events.FilterByTime(process.StartTimeRelativeMsec, process.EndTimeRelativeMsec))
         {
             if (evt.Opcode == (TraceEventOpcode) 0x24 && evt is CSwitchTraceData switchOut && switchOut.OldThreadID != evt.ThreadID && convertersByThreadId.Contains(switchOut.OldThreadID))
@@ -225,9 +226,9 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             }
 
             // The code versions of the methods (each tier, OSR, instrumented: a code block of its own) from their load and unload
-            // events in the ETLX (with --nofilter the only ones: the methods compiled during the profiling); the fast filter read the
-            // same events, an event named twice is one version. The frames are converted after this pass
-            if (evt is MethodLoadUnloadTraceDataBase methodCode && methodCode.MethodStartAddress != 0 && methodCode.MethodSize > 0)
+            // events in the ETLX when there is no sidecar (e.g. --nofilter). The fast filter already kept these events along with
+            // the rundown, so do not add them twice. The frames are converted after this pass.
+            if (readCodeVersionsFromEtlx && evt is MethodLoadUnloadTraceDataBase methodCode && methodCode.MethodStartAddress != 0 && methodCode.MethodSize > 0)
             {
                 codeVersions.Add(UltraEtwFastFilter.CodeVersionOf(methodCode));
             }
@@ -256,7 +257,7 @@ internal class UltraConverterToFirefoxEtw : UltraConverterToFirefox
             _counterSources = ReadCounterSources(counterSourceIds.Union(_counterSources?.Keys ?? Enumerable.Empty<int>()));
         }
 
-        _codeVersions = new UltraEtwCodeVersions(codeVersions);
+        _codeVersions = new UltraEtwCodeVersions(codeVersions, process.StartTimeRelativeMsec, process.EndTimeRelativeMsec);
 
         // Each thread has its own Firefox tables and only reads the TraceLog, so threads are converted in parallel
         Options.LogProgress?.Invoke($"Converting Events for {threads.Count} Threads");

@@ -34,6 +34,32 @@ public class UltraEtwFastFilterTests
     }
 
     /// <summary>
+    /// A killed conversion's incomplete sidecar must not be reused or read past its end.
+    /// </summary>
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(7)]
+    [DataRow(8)]
+    [DataRow(44)]
+    public void TruncatedCodeVersionsAreNotReused(int length)
+    {
+        var etlx = Path.Combine(Path.GetTempPath(), $"ultra-tests-{Guid.NewGuid():N}.etlx");
+        var file = UltraEtwFastFilter.GetCodeVersionsFileName(etlx);
+        try
+        {
+            UltraEtwFastFilter.WriteCodeVersions(file,
+                [new(7, 0x1000, 32, OptimizationTier.QuickJitted, 1, 10, UltraEtwFastFilter.CodeVersionEvent.Load)]);
+            using (var stream = File.OpenWrite(file)) stream.SetLength(length);
+            Assert.IsFalse(UltraEtwFastFilter.HasCodeVersions(etlx));
+            Assert.AreEqual(0, UltraEtwFastFilter.ReadCodeVersions(etlx).Count);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    /// <summary>
     /// The code versions the fast filter reads (the CLR rundown's included, which TraceLog does not write to the ETLX) go next to the
     /// filtered ETLX and come back as written; none without the file (an ETLX converted with --nofilter).
     /// </summary>
@@ -58,6 +84,10 @@ public class UltraEtwFastFilterTests
             UltraEtwFastFilter.WriteCodeVersions(file, versions);
             Assert.IsTrue(UltraEtwFastFilter.HasCodeVersions(etlx));
             CollectionAssert.AreEqual(versions, UltraEtwFastFilter.ReadCodeVersions(etlx));
+
+            UltraEtwFastFilter.WriteCodeVersions(file, []);
+            Assert.IsTrue(UltraEtwFastFilter.HasCodeVersions(etlx), "an empty but complete sidecar is valid for native processes");
+            Assert.AreEqual(0, UltraEtwFastFilter.ReadCodeVersions(etlx).Count);
 
             // the file of an ultra before the versions had a method, a time and an event ("UCV1"): not read, and the ETLX next to it
             // is not reused but filtered again

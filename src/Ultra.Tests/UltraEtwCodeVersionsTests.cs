@@ -25,6 +25,39 @@ public class UltraEtwCodeVersionsTests
         => versions.TryFind(address, timeMs, out var start, out var tier) ? (start, tier) : null;
 
     /// <summary>
+    /// The nearest-in-time fallback cannot use a code version from an earlier process with the same PID.
+    /// </summary>
+    [TestMethod]
+    public void ReusedPidDoesNotImportCodeFromThePreviousProcess()
+    {
+        var versions = new UltraEtwCodeVersions(
+        [
+            At(10, Event.Load, 1, X, 256, OptimizationTier.QuickJitted),
+            At(20, Event.Unload, 1, X, 256, OptimizationTier.QuickJitted),
+            At(100, Event.Load, 2, X + 0x1000, 256, OptimizationTier.OptimizedTier1),
+        ], 90, 200);
+
+        Assert.AreEqual(1, versions.Count);
+        Assert.IsNull(Find(versions, X + 16, 110), "the nearest-in-time fallback must not use a previous process's code");
+        Assert.AreEqual((X + 0x1000, OptimizationTier.OptimizedTier1), Find(versions, X + 0x1010, 110));
+    }
+
+    [TestMethod]
+    public void DuplicateEventsDoNotCreateExtraVersions()
+    {
+        UltraEtwFastFilter.CodeVersion[] events =
+        [
+            At(10, Event.Load, 1, X, 256, OptimizationTier.QuickJitted),
+            At(20, Event.Unload, 1, X, 256, OptimizationTier.QuickJitted),
+            At(30, Event.Load, 2, X, 256, OptimizationTier.OptimizedTier1),
+        ];
+        var versions = new UltraEtwCodeVersions(events.Concat(events));
+        Assert.AreEqual(2, versions.Count);
+        Assert.AreEqual((X, OptimizationTier.QuickJitted), Find(versions, X + 16, 15));
+        Assert.AreEqual((X, OptimizationTier.OptimizedTier1), Find(versions, X + 16, 35));
+    }
+
+    /// <summary>
     /// A 256-byte Tier0 method is unloaded and a 512-byte Tier1 method gets its address: a sample is in the one that was there at
     /// its time, the second method has its whole code (its upper half too), and both stay known.
     /// </summary>
