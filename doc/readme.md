@@ -484,7 +484,7 @@ incl pct self self_pct frames
 omitted: 863643 samples = 56.9%: 97815 under 1% (22 branches), 765828 over 40 rows (34 branches)
 ```
 
-A recursive algorithm spends these rows on its levels (above: `SplitNode` calling itself, 57% of the tree left out). `--collapse-recursion` makes the frames of a function from its outermost to its innermost call on a stack one frame, as the Firefox Profiler's "Collapse recursion" for every function at once: `A > F > B > F > C` becomes `A > F > C`, every function is then once on a path, and the leaf stays the leaf, so the self samples do not change. The same profile then shows what the recursion does over all its levels, with 8% of a top-down tree left out instead of 73%:
+A recursive algorithm spends these rows on its levels (above: `SplitNode` calling itself, 57% of the tree left out). `--collapse-recursion` makes the frames of a function from its outermost to its innermost call on a stack one frame, as the Firefox Profiler's "Collapse recursion" for every function at once: `A > F > B > F > C` becomes `A > F > C`, every function is then once on a path, and the leaf stays the leaf, so the self samples do not change. The focus totals count the functions remaining on these collapsed paths. The same profile then shows what the recursion does over all its levels, with 8% of a top-down tree left out instead of 73%:
 
 ```console
 ## callers MyApp.TreeBuilder.SumBins

@@ -353,7 +353,7 @@ public class UltraProfileReportTests
             " 10 50.0% 10 50.0% B > Leaf\n" +
             " 5 25.0% 5 25.0% Leaf\n" +
             "omitted: none\n");
-        StringAssert.Contains(collapsed, "## callers Leaf\ntotal: 15 samples with it on the stack = 75.0% of 20 cpu samples, self 15 = 75.0%");
+        StringAssert.Contains(collapsed, "## callers Leaf\ntotal: 15 samples with it on the collapsed stack = 75.0% of 20 cpu samples, self 15 = 75.0%");
         StringAssert.Contains(collapsed, "15 100.0% 15 100.0% Leaf\n 10 66.7% 10 66.7% B < A < Main\n 5 33.3% 5 33.3% A < Main\n");
 
         var levels = Report(profile, new UltraProfileReportOptions { Compact = true, Detailed = true, Hotspots = 0, Workers = 2 });
@@ -362,6 +362,23 @@ public class UltraProfileReportTests
             " 15 75.0% 5 25.0% B > A\n" +
             "  10 50.0% 10 50.0% B > Leaf\n" +
             " 5 25.0% 5 25.0% Leaf\n");
+    }
+
+    /// <summary>A focus removed from a path by recursion collapse is counted only in the surviving collapsed paths.</summary>
+    [TestMethod]
+    public void CollapsedFocusSummaryNamesTheCollapsedStacks()
+    {
+        var profile = new FirefoxProfiler.Profile();
+        profile.Meta.Product = "Test";
+        profile.Meta.ProfilingEndTime = 2000;
+        profile.Threads.Add(MakePathThread("main", "1", ("A>G>F>G>C", 5), ("A>G>F", 3)));
+
+        var options = new UltraProfileReportOptions { Focus = "F", TreeThreads = 0, CollapseRecursion = true, Compact = true, Workers = 1 };
+        var compact = Report(profile, options);
+        StringAssert.Contains(compact, "total: 3 samples with it on the collapsed stack = 37.5% of 8 cpu samples");
+        options.Compact = false;
+        var prose = Report(profile, options);
+        StringAssert.Contains(prose, "3 samples with it on the collapsed stack (37.5% of the 8 CPU samples)");
     }
 
     /// <summary>

@@ -525,16 +525,17 @@ public sealed partial class UltraProfileReport
         // The self of the summary counts every frame of the focus functions: the callees' first rows are only the outermost ones
         var (total, self) = (tree.Total, FocusSelf(all, focus));
         var matched = focus.Count > 1 ? FormattableString.Invariant($", {focus.Count} functions match") : "";
+        var stackLabel = CollapseRecursion ? "the collapsed stack" : "the stack";
         o.WriteLine();
         if (Compact)
         {
             Line($"## {(kind == TreeKind.Callers ? "callers" : "callees")} {title}");
-            Line($"total: {Count(total, "sample")} with it on the stack = {Pct(total, cpuSamples)} of {Count(cpuSamples, "cpu sample")}, self {self} = {Pct(self, cpuSamples)}, all threads{matched}; pct of {total}{(kind == TreeKind.Callers ? "; self = it on top" : "")}");
+            Line($"total: {Count(total, "sample")} with it on {stackLabel} = {Pct(total, cpuSamples)} of {Count(cpuSamples, "cpu sample")}, self {self} = {Pct(self, cpuSamples)}, all threads{matched}; pct of {total}{(kind == TreeKind.Callers ? "; self = it on top" : "")}");
         }
         else
         {
             var share = cpuSamples > 0 ? total * 100.0 / cpuSamples : 0;
-            Line($"{(kind == TreeKind.Callers ? "callers" : "callees")} of {title} over all the threads{matched}: {total:N0} samples with it on the stack ({share:F1}% of the {cpuSamples:N0} CPU samples), {self:N0} with it on top (% of the {total:N0}{(kind == TreeKind.Callers ? "; self: it on top" : "")}):");
+            Line($"{(kind == TreeKind.Callers ? "callers" : "callees")} of {title} over all the threads{matched}: {total:N0} samples with it on {stackLabel} ({share:F1}% of the {cpuSamples:N0} CPU samples), {self:N0} with it on top (% of the {total:N0}{(kind == TreeKind.Callers ? "; self: it on top" : "")}):");
         }
         if (total == 0)
         {
