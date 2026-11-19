@@ -16,6 +16,11 @@ public readonly record struct UTimeSpan(TimeSpan Value) : IComparable<UTimeSpan>
     public static UTimeSpan MaxValue => new(TimeSpan.MaxValue);
 
     /// <summary>
+    /// Gets the smallest representable time span, used as a sentinel for a time range open towards the past.
+    /// </summary>
+    public static UTimeSpan MinValue => new(TimeSpan.MinValue);
+
+    /// <summary>
     /// Gets the time span value in milliseconds.
     /// </summary>
     public double InMs => Value.TotalMilliseconds;

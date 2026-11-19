@@ -290,6 +290,12 @@ internal sealed class UltraPerfTraceLoader : IDisposable
     {
         private readonly Dictionary<ulong, UTraceThread> _threads = new();
         private readonly Dictionary<ulong, UTraceNativeModule> _modulesByAddress = new();
+        // The code address an instruction pointer was resolved to, and the times (CLR time) it holds for: the next frames at that
+        // address in those times take it as it is - the method ranges do not change any more, the CLR events of the process are all
+        // loaded before its samples (Load). Looking for the method range (a binary search over the JIT'd code ranges) and
+        // the code address (a dictionary on a 5-field key) for every frame of every sample was most of the load (2026-11-19: 21.6
+        // of 26.4 s converting a 120 s trace of 8 busy threads, 8 M records of ~38 frames).
+        private readonly Dictionary<ulong, ResolvedAddress> _resolvedAddresses = new();
         private UnsafeList<UCodeAddressIndex> _callStack = new(256);
         private UAddress _lowestFileBackedModule = ulong.MaxValue;
         private string? _lowestFileBackedModulePath;
@@ -360,12 +366,18 @@ internal sealed class UltraPerfTraceLoader : IDisposable
             foreach (var ip in callChain)
             {
                 if (ip >= PerfEventNative.PERF_CONTEXT_MAX) continue;
-                var address = (UAddress)ip;
-                // the method that was loaded there at the time of the sample, in the version it then had (its code range: start
-                // and tier), kept with the code address for the frame's offset and tier
-                _callStack.Add(managedMethods.TryFindCodeRangeByAddress(address, sampleTimeInClrTime, out var codeRange)
-                    ? codeAddresses.GetOrCreateAddress(address, codeRange)
-                    : codeAddresses.GetOrCreateAddress(address, -1));
+                ref var resolved = ref CollectionsMarshal.GetValueRefOrAddDefault(_resolvedAddresses, ip, out var known);
+                if (!known || sampleTimeInClrTime < resolved.ValidFrom || sampleTimeInClrTime >= resolved.ValidTo)
+                {
+                    var address = (UAddress)ip;
+                    // the method that was loaded there at the time of the sample, in the version it then had (its code range: start
+                    // and tier), kept with the code address for the frame's offset and tier
+                    var codeAddressIndex = managedMethods.TryFindCodeRangeByAddress(address, sampleTimeInClrTime, out var codeRange, out var validFrom, out var validTo)
+                        ? codeAddresses.GetOrCreateAddress(address, codeRange)
+                        : codeAddresses.GetOrCreateAddress(address, -1);
+                    resolved = new ResolvedAddress(codeAddressIndex, validFrom, validTo);
+                }
+                _callStack.Add(resolved.CodeAddressIndex);
             }
 
             if (_callStack.Count == 0)
@@ -402,5 +414,8 @@ internal sealed class UltraPerfTraceLoader : IDisposable
                 foreach (var counter in thread.CounterSamples) counter.SortByTimestamp();
             }
         }
+
+        /// <summary>The code address of an instruction pointer for the samples from <paramref name="ValidFrom"/> (inclusive) to <paramref name="ValidTo"/> (exclusive), in CLR time.</summary>
+        private readonly record struct ResolvedAddress(UCodeAddressIndex CodeAddressIndex, UTimeSpan ValidFrom, UTimeSpan ValidTo);
     }
 }

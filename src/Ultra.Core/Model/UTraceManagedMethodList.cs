@@ -213,6 +213,27 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
     /// same name, another compilation) has two ranges there, and only the time of the sample tells which one the frame was in.
     /// </remarks>
     public bool TryFindCodeRangeByAddress(UAddress address, UTimeSpan time, out UMethodAddressRange range)
+        => TryFindCodeRangeByAddress(address, time, out range, out _, out _);
+
+    /// <summary>
+    /// <see cref="TryFindCodeRangeByAddress(UAddress, UTimeSpan, out UMethodAddressRange)"/>, with the times over which the answer for
+    /// <paramref name="address"/> is the same: to resolve an address once for all the samples it is in.
+    /// </summary>
+    /// <remarks>
+    /// An answer kept for those times holds only while the ranges stay exactly as they were: no range added, none of their bounds,
+    /// lifetimes or tiers changed. A later report of a method at its address can still extend its end (to an address that had no
+    /// range: a kept miss goes stale), close its lifetime or fill its tier - keep answers only once all the method events are in, as
+    /// the Linux trace loader does (the CLR events of a process are all loaded before its samples).
+    /// </remarks>
+    /// <param name="address">The address to resolve.</param>
+    /// <param name="time">The time at which the address was captured.</param>
+    /// <param name="range">The code range found, if any.</param>
+    /// <param name="validFrom">The first time with the same answer (inclusive).</param>
+    /// <param name="validTo">The end of the times with the same answer (exclusive): from <paramref name="validFrom"/> to it the address
+    /// gives the same range, or none. Both are <paramref name="time"/> - no other time is known to give the same answer - when the range
+    /// is the nearest in time, none of those holding the address being loaded at that time.</param>
+    /// <returns>True if a code range was found, otherwise false.</returns>
+    public bool TryFindCodeRangeByAddress(UAddress address, UTimeSpan time, out UMethodAddressRange range, out UTimeSpan validFrom, out UTimeSpan validTo)
     {
         if (!_isSorted) SortMethodAddressRanges();
         var ranges = _methodAddressRanges.AsSpan();
@@ -221,7 +242,12 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
         // method is recycled, at its start or inside it): all the ranges with the address are looked at, from the last one
         // starting at or before it back, for the one that was loaded at that time - the most recent one first.
         var found = -1;
-        long foundDistance = long.MaxValue;
+        var alive = false;
+        ulong foundDistance = 0;   // of the range found, while found >= 0
+        // The answer holds while no range met before the one found is loaded: until the next of them begins, from the last of them
+        // that ended. An address no range holds gives none at any time.
+        var from = UTimeSpan.MinValue;
+        var to = UTimeSpan.MaxValue;
         for (var i = LastRangeStartingAtOrBefore(ranges, address); i >= 0 && _reach[i] > address; i--)
         {
             ref readonly var candidate = ref ranges[i];
@@ -229,13 +255,26 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
             if (candidate.IsAliveAt(time))
             {
                 found = i;
+                alive = true;
                 break;
             }
 
+            if (time < candidate.BeginTime)
+            {
+                if (candidate.BeginTime < to) to = candidate.BeginTime;
+            }
+            else if (candidate.EndTime > from)
+            {
+                from = candidate.EndTime;
+            }
+
             // No range covering that time (e.g. a sample taken while the code block was free, or just before the load event of
-            // its method): the one nearest in time
-            var distance = time < candidate.BeginTime ? candidate.BeginTime.Value.Ticks - time.Value.Ticks : time.Value.Ticks - candidate.EndTime.Value.Ticks;
-            if (distance < foundDistance)
+            // its method): the one nearest in time. In unsigned ticks, the later time minus the earlier: over the whole range of
+            // UTimeSpan (the difference of two longs can pass long.MaxValue), and the first range met is taken whatever its distance
+            var distance = time < candidate.BeginTime
+                ? unchecked((ulong)candidate.BeginTime.Value.Ticks - (ulong)time.Value.Ticks)
+                : unchecked((ulong)time.Value.Ticks - (ulong)candidate.EndTime.Value.Ticks);
+            if (found < 0 || distance < foundDistance)
             {
                 found = i;
                 foundDistance = distance;
@@ -245,10 +284,24 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
         if (found < 0)
         {
             range = default;
+            validFrom = from;
+            validTo = to;
             return false;
         }
 
         range = ranges[found];
+        if (alive)
+        {
+            // and while the range found is loaded
+            validFrom = range.BeginTime > from ? range.BeginTime : from;
+            validTo = range.EndTime < to ? range.EndTime : to;
+        }
+        else
+        {
+            // the nearest in time changes with the time: this one only
+            validFrom = time;
+            validTo = time;
+        }
         return true;
     }
 
@@ -264,7 +317,7 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
     /// </summary>
     /// <remarks>
     /// Without the time of a sample: when the method had the address in more than one range (it came back to it after its
-    /// unload), this is the most recent one. The version of a sampled frame comes from <see cref="TryFindCodeRangeByAddress"/>,
+    /// unload), this is the most recent one. The version of a sampled frame comes from <see cref="TryFindCodeRangeByAddress(UAddress, UTimeSpan, out UMethodAddressRange)"/>,
     /// which <see cref="UCodeAddressList"/> keeps with the frame's code address.
     /// </remarks>
     public bool TryFindMethodCodeStart(UAddress address, int methodIndex, out UAddress codeStart, out OptimizationTier tier)
