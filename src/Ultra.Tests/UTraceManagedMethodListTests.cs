@@ -334,6 +334,109 @@ public class UTraceManagedMethodListTests
         AssertMethodAt(methods, CodeBlock + 0x10, timeMs: 35, "First");
     }
 
+    /// <summary>
+    /// The times a lookup says its answer holds for (the Linux loader caches an address for them) give that answer: at every time of
+    /// a grid, for addresses in a recycled code block, in a method only a rundown names, between them and in no range - and the times
+    /// of a method that another one takes part of for a while end where that one begins and begin where it ends.
+    /// </summary>
+    [TestMethod]
+    public void TheTimesAnAnswerHoldsForGiveTheSameAnswer()
+    {
+        var methods = new UTraceManagedMethodList();
+
+        // A in the block from 10 to 20 ms, B from 30 ms on (never unloaded), C in part of B from 50 to 60 ms, and D (Tier0 at 5 ms,
+        // Tier1 elsewhere at 25) beside them; E only named by the rundown
+        Load(methods, methodID: 1, "A", CodeBlock, size: 0x40, loadTimeMs: 10);
+        UnloadEvent(methods, methodID: 1, "A", CodeBlock, size: 0x40, unloadTimeMs: 20);
+        Load(methods, methodID: 2, "B", CodeBlock, size: 0x80, loadTimeMs: 30);
+        Load(methods, methodID: 3, "C", CodeBlock + 0x20, size: 0x20, loadTimeMs: 50);
+        UnloadEvent(methods, methodID: 3, "C", CodeBlock + 0x20, size: 0x20, unloadTimeMs: 60);
+        Load(methods, methodID: 4, "D", CodeBlock + 0x100, size: 0x40, loadTimeMs: 5, OptimizationTier.QuickJitted);
+        Load(methods, methodID: 4, "D", CodeBlock + 0x1000, size: 0x40, loadTimeMs: 25, OptimizationTier.OptimizedTier1);
+        Rundown(methods, methodID: 5, "E", CodeBlock + 0x2000, size: 0x40, rundownTimeMs: 900);
+
+        UAddress[] addresses = [CodeBlock + 0x10, CodeBlock + 0x30, CodeBlock + 0x60, CodeBlock + 0x90, CodeBlock + 0x110, CodeBlock + 0x1010, CodeBlock + 0x2010, CodeBlock - 0x10];
+        var times = Enumerable.Range(-10, 160).Select(i => UTimeSpan.FromMilliseconds(i * 0.5)).ToArray();
+        var cacheable = 0;
+        foreach (var address in addresses)
+        {
+            foreach (var time in times)
+            {
+                var found = methods.TryFindCodeRangeByAddress(address, time, out var range, out var validFrom, out var validTo);
+                Assert.AreEqual(found, methods.TryFindCodeRangeByAddress(address, time, out var plain));
+                Assert.AreEqual(range, plain, $"the same range at {address} at {time}");
+                if (validFrom == validTo)
+                {
+                    Assert.AreEqual(time, validFrom, "an answer for this time only is for its time");
+                    continue;
+                }
+
+                cacheable++;
+                Assert.IsTrue(validFrom <= time && time < validTo, $"{address} at {time}: {validFrom} to {validTo} without its time");
+                foreach (var other in times.Where(t => t >= validFrom && t < validTo))
+                {
+                    Assert.AreEqual(found, methods.TryFindCodeRangeByAddress(address, other, out var otherRange), $"{address} at {time} holds to {other}");
+                    Assert.AreEqual(range, otherRange, $"{address}: the range at {time} and at {other}, said to be the same");
+                }
+            }
+        }
+        Assert.IsTrue(cacheable > addresses.Length * times.Length / 2, $"most answers hold beyond their time: {cacheable}");
+
+        // A from 10 to 20 ms while B is not loaded yet; B from 30 on where C never is; in no range: always none
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x10, UTimeSpan.FromMilliseconds(15), out _, out var from, out var to));
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(10), UTimeSpan.FromMilliseconds(20)), (from, to));
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x10, UTimeSpan.FromMilliseconds(40), out _, out from, out to));
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(30), UTimeSpan.MaxValue), (from, to));
+        // in C's place C from 50 to 60 ms, and B - loaded all along - only before and after: its times clipped to C's, whichever
+        // comes first (a cache of B's whole lifetime would give B to a sample in C)
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x30, UTimeSpan.FromMilliseconds(55), out var c, out from, out to));
+        Assert.AreEqual("C", methods[c.Index].MethodName);
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(50), UTimeSpan.FromMilliseconds(60)), (from, to));
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x30, UTimeSpan.FromMilliseconds(40), out var b, out from, out to));
+        Assert.AreEqual("B", methods[b.Index].MethodName);
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(30), UTimeSpan.FromMilliseconds(50)), (from, to), "before C: until C begins");
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x30, UTimeSpan.FromMilliseconds(65), out b, out from, out to));
+        Assert.AreEqual("B", methods[b.Index].MethodName);
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(60), UTimeSpan.MaxValue), (from, to), "after C: from its end");
+        // between A and B nothing is loaded: the nearest in time, for that time only
+        Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x10, UTimeSpan.FromMilliseconds(22), out _, out from, out to));
+        Assert.AreEqual((UTimeSpan.FromMilliseconds(22), UTimeSpan.FromMilliseconds(22)), (from, to));
+        Assert.IsFalse(methods.TryFindCodeRangeByAddress(CodeBlock - 0x10, UTimeSpan.FromMilliseconds(15), out _, out from, out to));
+        Assert.AreEqual((UTimeSpan.MinValue, UTimeSpan.MaxValue), (from, to));
+    }
+
+    /// <summary>
+    /// At the extreme times of a <see cref="UTimeSpan"/> the distance to a range reaches long.MaxValue ticks and more: the address is
+    /// still found, as the nearest range for that time only (a range exactly long.MaxValue ticks away was never taken), and of two
+    /// ranges the nearest is taken (a signed difference past long.MaxValue turned negative and won).
+    /// </summary>
+    [TestMethod]
+    public void TheNearestRangeIsFoundAtTheExtremeTimes()
+    {
+        // one range from tick 0 on (a load at 0 ms, as a rundown gives it): every time before it takes it, for that time only
+        var single = new UTraceManagedMethodList();
+        Load(single, methodID: 1, "Compute", CodeBlock, size: 0x40, loadTimeMs: 0);
+        foreach (var ticks in new[] { long.MinValue, long.MinValue + 1, -1L })
+        {
+            var time = new UTimeSpan(new TimeSpan(ticks));
+            Assert.IsTrue(single.TryFindCodeRangeByAddress(CodeBlock + 0x10, time, out var range, out var from, out var to), $"found at {ticks} ticks");
+            Assert.AreEqual("Compute", single[range.Index].MethodName);
+            Assert.AreEqual((time, time), (from, to), $"at {ticks} ticks: for that time only");
+        }
+
+        // X from -5 to -2 ms, then Y from 50 to 100 ms in its place: the earliest time is nearest to X, the latest to Y
+        var methods = new UTraceManagedMethodList();
+        Load(methods, methodID: 1, "X", CodeBlock, size: 0x40, loadTimeMs: -5);
+        UnloadEvent(methods, methodID: 1, "X", CodeBlock, size: 0x40, unloadTimeMs: -2);
+        Load(methods, methodID: 2, "Y", CodeBlock, size: 0x40, loadTimeMs: 50);
+        UnloadEvent(methods, methodID: 2, "Y", CodeBlock, size: 0x40, unloadTimeMs: 100);
+        foreach (var (ticks, expected) in new[] { (long.MinValue, "X"), (long.MaxValue - 1, "Y") })
+        {
+            Assert.IsTrue(methods.TryFindCodeRangeByAddress(CodeBlock + 0x10, new UTimeSpan(new TimeSpan(ticks)), out var range), $"found at {ticks} ticks");
+            Assert.AreEqual(expected, methods[range.Index].MethodName, $"the nearest at {ticks} ticks");
+        }
+    }
+
     private static void Load(UTraceManagedMethodList methods, long methodID, string methodName, UAddress address, ulong size, double loadTimeMs, OptimizationTier tier)
         => methods.GetOrCreateManagedMethod(1, 1, methodID, "dynamicClass", methodName, "()", 0, MethodFlags.Dynamic | MethodFlags.Jitted, address, new USize(size), UTimeSpan.FromMilliseconds(loadTimeMs), tier);
 

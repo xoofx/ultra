@@ -293,6 +293,95 @@ public class UltraPerfLinuxConvertTests
         }
     }
 
+    /// <summary>
+    /// The loader resolves an instruction pointer once for the samples of the times it holds for: an address in a recycled code
+    /// block still takes, in every sample, the method loaded there at the sample's time - samples in and out of time order, before
+    /// any load, between two methods, and with the CLR session started after the trace.
+    /// </summary>
+    [TestMethod]
+    public void LoaderResolvesARecycledAddressAtEachSampleTime()
+    {
+        const int pid = 42;
+        const ulong start = 1_000_000_000UL;
+        const ulong block = 0x7e0000001000UL;
+        var header = new UltraPerfHeader
+        {
+            CpuCount = 2,
+            SamplingPeriodNs = 500_000,
+            StartMonotonicNs = start,
+            StartUtcTicks = new DateTime(2026, 11, 19, 12, 0, 0, DateTimeKind.Utc).Ticks,
+            SampleType = PerfEventCollector.SampleType,
+            ProcessArchitecture = Architecture.X64,
+        };
+        header.ProcessIds.Add(pid);
+        header.Events.Add(PerfEventCollector.CreateCpuClockAttr(500_000));
+
+        // In CLR time (2 ms behind the trace: a sample at 12 ms of the trace is at 10 ms of the CLR): First in the block from 10 to
+        // 20 ms, Second from 30 ms on, Other beside them all along
+        var session = new UTraceSession();
+        var process = new UTraceProcess { ProcessID = pid };
+        session.Processes.Add(process);
+        var methods = process.ManagedMethods;
+        methods.GetOrCreateManagedMethod(1, 10, 100, "Work", "First", "", 1, default, block, 0x40UL, UTimeSpan.FromMilliseconds(10));
+        methods.UnloadManagedMethod(100, block, UTimeSpan.FromMilliseconds(20));
+        methods.GetOrCreateManagedMethod(1, 10, 200, "Work", "Second", "", 2, default, block, 0x40UL, UTimeSpan.FromMilliseconds(30));
+        methods.GetOrCreateManagedMethod(1, 10, 300, "Work", "Other", "", 3, default, block + 0x1000, 0x40UL, UTimeSpan.FromMilliseconds(1));
+        const double clrOffsetMs = 2.0;
+
+        // trace time (ms) of each sample, in the order written: the leaf in the block, called from Other, called from native code
+        double[] times = [40, 12, 35, 15, 3, 25, 41, 19.5, 30.5, 12.5, 22];
+        var path = Path.Combine(Path.GetTempPath(), $"ultra_test_{Guid.NewGuid():N}.ultraperf");
+        try
+        {
+            using (var writer = new UltraPerfFileWriter(path, header))
+            {
+                writer.WriteFrame(UltraPerfFrameKind.EventName, 0, 0, UltraPerfPayload.EncodeEventName(0, PerfEventCollector.CpuClockEventName));
+                writer.WriteFrame(UltraPerfFrameKind.MapSnapshot, 0, 0, UltraPerfPayload.EncodeMap(new UltraPerfPayload.Map(pid, 0x400000, 0x500000, 0, "/opt/app/App")));
+                foreach (var time in times)
+                {
+                    writer.WriteRecord(0, 0, MakeSample(pid, 43, start + (ulong)(time * 1_000_000), 0, 500_000, [PerfEventNative.PERF_CONTEXT_USER, block + 0x10, block + 0x1010, 0x401000]));
+                }
+                writer.WriteFrame(UltraPerfFrameKind.End, 0, 0, UltraPerfPayload.EncodeEnd(new UltraPerfPayload.End(0, (ulong)times.Length, 0, start + 50_000_000)));
+            }
+
+            using (var loader = new UltraPerfTraceLoader(path))
+            {
+                loader.Load(session, [pid], _ => clrOffsetMs);
+            }
+
+            var worker = process.Threads.Items.ToArray().Single(t => t.ThreadID == 43);
+            Assert.AreEqual(times.Length, worker.Samples.Count);
+            // where none is loaded the nearest in time: First before 10 ms and up to 25 ms of CLR time (27 of the trace), Second after
+            var expected = new Dictionary<double, string>
+            {
+                [3] = "First", [12] = "First", [12.5] = "First", [15] = "First", [19.5] = "First", [22] = "First", [25] = "First",
+                [30.5] = "Second", [35] = "Second", [40] = "Second", [41] = "Second",
+            };
+            foreach (var sample in worker.Samples.Items)
+            {
+                var frames = new List<UCodeAddressIndex>();
+                for (var callStackIndex = sample.CallStackIndex; callStackIndex.Value > 0; callStackIndex = process.CallStacks[callStackIndex].ParentCallStackIndex)
+                {
+                    frames.Add(process.CallStacks[callStackIndex].CodeAddressIndex);
+                }
+                Assert.AreEqual(3, frames.Count);
+                string MethodName(UCodeAddressIndex frame)
+                {
+                    var methodIndex = process.CodeAddresses.GetManagedMethodIndex(frame);
+                    return methodIndex < 0 ? "native" : methods[methodIndex].MethodName;
+                }
+                var traceTimeMs = Math.Round(sample.Timestamp.InMs, 3);
+                Assert.AreEqual(expected[traceTimeMs], MethodName(frames[0]), $"the leaf at {traceTimeMs} ms of the trace");
+                Assert.AreEqual("Other", MethodName(frames[1]));
+                Assert.AreEqual("native", MethodName(frames[2]));
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static byte[] MakeSample(int pid, uint tid, ulong time, uint cpu, ulong period, ulong[] callChain)
     {
         var record = new byte[56 + callChain.Length * 8];
