@@ -68,7 +68,7 @@ public sealed class UCodeAddressList : UGenericList<UAddress>
 
     /// <summary>
     /// Gets or creates a code address for the specified address in the code range of a managed method that was loaded there
-    /// at the time of the sample (<see cref="UTraceManagedMethodList.TryFindCodeRangeByAddress"/>).
+    /// at the time of the sample (<see cref="UTraceManagedMethodList.TryFindCodeRangeByAddress(UAddress, UTimeSpan, out UMethodAddressRange)"/>).
     /// </summary>
     /// <param name="address">The code address.</param>
     /// <param name="codeRange">The code range of the managed method the address was in.</param>
