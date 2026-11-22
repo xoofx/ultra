@@ -347,7 +347,7 @@ public class UltraPerfLinuxConvertTests
                 foreach (var time in times)
                 {
                     writer.WriteRecord(0, 0, MakeSample(pid, 43, start + (ulong)(time * 1_000_000), 0, 500_000, [PerfEventNative.PERF_CONTEXT_USER, block + 0x10, block + 0x1010, 0x401000]));
-                    writer.WriteRecord(0, 0, MakeSample(otherPid, 78, start + (ulong)(time * 1_000_000), 1, 500_000, [PerfEventNative.PERF_CONTEXT_USER, block + 0x10, block + 0x1010, 0x401000]));
+                    writer.WriteRecord(1, 0, MakeSample(otherPid, 78, start + (ulong)(time * 1_000_000), 1, 500_000, [PerfEventNative.PERF_CONTEXT_USER, block + 0x10, block + 0x1010, 0x401000]));
                 }
                 writer.WriteFrame(UltraPerfFrameKind.End, 0, 0, UltraPerfPayload.EncodeEnd(new UltraPerfPayload.End(0, (ulong)times.Length * 2, 0, start + 60_000_000)));
             }
