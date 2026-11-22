@@ -228,10 +228,11 @@ public sealed class UTraceManagedMethodList : UGenericList<UTraceManagedMethod>
     /// <param name="address">The address to resolve.</param>
     /// <param name="time">The time at which the address was captured.</param>
     /// <param name="range">The code range found, if any.</param>
-    /// <param name="validFrom">The first time with the same answer (inclusive).</param>
-    /// <param name="validTo">The end of the times with the same answer (exclusive): from <paramref name="validFrom"/> to it the address
-    /// gives the same range, or none. Both are <paramref name="time"/> - no other time is known to give the same answer - when the range
-    /// is the nearest in time, none of those holding the address being loaded at that time.</param>
+    /// <param name="validFrom">The start (inclusive) of times, around <paramref name="time"/>, at which the address gives the same range,
+    /// or none. They are conservative: a time outside them can give the same answer too.</param>
+    /// <param name="validTo">The end (exclusive) of those times. It equals <paramref name="validFrom"/> - both are <paramref name="time"/>,
+    /// an empty interval: the answer is not to be reused - when the range is the nearest in time, none of those holding the address being
+    /// loaded at that time.</param>
     /// <returns>True if a code range was found, otherwise false.</returns>
     public bool TryFindCodeRangeByAddress(UAddress address, UTimeSpan time, out UMethodAddressRange range, out UTimeSpan validFrom, out UTimeSpan validTo)
     {
